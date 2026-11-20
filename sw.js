@@ -14,7 +14,9 @@ const assets = [
 
 self.addEventListener("install", (event) => {
   const requests = [home.href, ...assets].map((url) => new Request(url, { cache: "reload" }));
-  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(requests)));
+  event.waitUntil(caches.open(cacheName)
+    .then((cache) => cache.addAll(requests))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
