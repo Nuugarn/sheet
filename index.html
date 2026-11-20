@@ -8,9 +8,9 @@
   <title>Klao Built-in · คุมงาน</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=14">
-  <script src="./data.js?v=14" defer></script>
-  <script src="./app.js?v=14" defer></script>
+  <link rel="stylesheet" href="./style.css?v=15">
+  <script src="./data.js?v=15" defer></script>
+  <script src="./app.js?v=15" defer></script>
 </head>
 <body>
   <aside class="rail" aria-label="เมนูหลัก">
@@ -30,6 +30,11 @@
     <main id="content"></main>
   </div>
   <button id="add" class="fab" type="button" aria-label="เพิ่มงาน" title="เพิ่มงาน" hidden></button>
+  <dialog id="house-menu" aria-label="จัดการบ้าน">
+    <button type="button" class="house-menu-action" data-new-house>เพิ่ม</button>
+    <button type="button" class="house-menu-action" data-select-houses>แก้ไข</button>
+    <button type="button" class="fab house-menu-close" aria-label="ปิดเมนูจัดการบ้าน" data-close-house-menu></button>
+  </dialog>
   <input type="file" id="backup-file" accept=".zip,.json,application/zip,application/json" hidden>
   <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
   <div class="toast" id="toast" role="status"></div>

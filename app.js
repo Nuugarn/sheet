@@ -7,7 +7,6 @@ const paths = {
   calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M7.5 3v5m9-5v5m-13 3h17M8 15h2m4 0h2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pencil: '<path d="m14 6 4 4M4 20l1-5L16 4a2.8 2.8 0 0 1 4 4L9 19z"/>',
-  swap: '<path d="M4 8h15m-4-4 4 4-4 4m5 4H5m4-4-4 4 4 4"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
@@ -25,6 +24,8 @@ const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
 const $ = (selector) => document.querySelector(selector);
+const addButton = $("#add");
+const houseMenu = $("#house-menu");
 const backupPicker = $("#backup-file") || document.body.appendChild(Object.assign(document.createElement("input"), {
   id: "backup-file", type: "file", hidden: true
 }));
@@ -65,7 +66,7 @@ let projectId = null;
 let detailTab = "งาน";
 let selectingHouses = false;
 const selectedHouses = new Set();
-const housesShowingBalance = new Set();
+let houseAmountTimer;
 let filter = "all";
 let calendarDate = today;
 let monthStart = today.slice(0, 7) + "-01";
@@ -105,7 +106,9 @@ function updateNetwork() {
   connection.classList.toggle("offline", !navigator.onLine);
 }
 function updateControls() {
-  $("#add").disabled = !ready || busy;
+  addButton.disabled = !ready || busy;
+  houseMenu.querySelector("[data-new-house]").disabled = !ready || busy;
+  houseMenu.querySelector("[data-select-houses]").disabled = !ready || busy || !projects.length;
   document.querySelectorAll("#dialog [type=submit], #dialog [data-confirm], .done-check, [data-export]").forEach((button) => {
     button.disabled = !ready || busy || (button.dataset.confirm === "timed" && performance.now() < confirmationAvailableAt);
   });
@@ -117,9 +120,6 @@ function setWorkspace(data) {
   tasks = data.tasks;
   for (const id of selectedHouses) {
     if (!projectFor(id)) selectedHouses.delete(id);
-  }
-  for (const id of housesShowingBalance) {
-    if (!projectFor(id)) housesShowingBalance.delete(id);
   }
   if (!projects.length) selectingHouses = false;
   if (view === "detail" && !projectFor(projectId)) goHome();
@@ -187,29 +187,14 @@ function todayPage() {
     + '<section class="panel"><div class="panel-head"><h2>บ้านลูกค้า</h2><button class="text-button" data-view="homes">ดูทั้งหมด</button></div>'
     + projects.map((project) => '<button class="site-preview" data-project="' + esc(project.id) + '">' + tile("homes") + '<span><strong>' + esc(project.name) + '</strong><span class="subtle">' + esc(stageName(project)) + '</span></span></button>').join("") + '</section></div>';
 }
-function houseAmountDetails(project) {
-  const showingBalance = housesShowingBalance.has(project.id);
-  const label = showingBalance ? "จำนวนเงินคงเหลือ" : "จำนวนเงินรวม";
-  const amount = money(showingBalance ? remainingAmount(project) : project.contractSatang);
-  const next = showingBalance ? "จำนวนเงินรวม" : "จำนวนเงินคงเหลือ";
-  return { label, amount, description: label + " " + amount + " ของ " + project.name + " กดเพื่อดู" + next };
-}
 function houseAmount(project) {
-  const { label, amount, description } = houseAmountDetails(project);
-  const content = '<span><span class="subtle">' + label + '</span><strong class="value">' + amount + '</strong></span>';
-  if (selectingHouses) return '<div class="project-amount">' + content + '</div>';
-  return '<button type="button" class="project-amount" data-house-amount="' + esc(project.id) + '" aria-label="'
-    + esc(description) + '">' + content + icon("swap") + '</button>';
-}
-function toggleHouseAmount(button) {
-  const project = projectFor(button.dataset.houseAmount);
-  if (!project) return;
-  if (housesShowingBalance.has(project.id)) housesShowingBalance.delete(project.id);
-  else housesShowingBalance.add(project.id);
-  const { label, amount, description } = houseAmountDetails(project);
-  button.querySelector(".subtle").textContent = label;
-  button.querySelector(".value").textContent = amount;
-  button.setAttribute("aria-label", description);
+  const total = money(project.contractSatang);
+  const balance = money(remainingAmount(project));
+  return '<div class="project-amount"><span class="visually-hidden">จำนวนเงินรวม ' + total
+    + ' · จำนวนเงินคงเหลือ ' + balance + '</span>'
+    + '<span class="project-figure amount-total" aria-hidden="true"><span class="subtle">จำนวนเงินรวม</span><strong class="value">'
+    + total + '</strong></span><span class="project-figure amount-balance" aria-hidden="true">'
+    + '<span class="subtle">จำนวนเงินคงเหลือ</span><strong class="value">' + balance + '</strong></span></div>';
 }
 function homesPage() {
   const upcoming = sorted(tasks.filter((task) => !task.done && task.date >= today));
@@ -221,11 +206,9 @@ function homesPage() {
     return Number(!a.next) - Number(!b.next);
   });
   const actions = selectingHouses
-    ? '<button class="outline-button" data-finish-house-selection>เสร็จสิ้น</button>'
-      + '<button class="primary danger-fill" data-delete-selected-houses>ลบที่เลือก</button>'
-    : (projects.length ? '<button class="outline-button house-edit" data-select-houses aria-label="เลือกบ้านที่จะลบ" title="เลือกบ้านที่จะลบ">'
-      + icon("pencil") + '</button>' : '')
-      + '<button class="outline-button" data-new-house>' + icon("plus") + '<span>เพิ่มบ้าน</span></button>';
+    ? '<div class="house-actions"><button class="outline-button" data-finish-house-selection>เสร็จสิ้น</button>'
+      + '<button class="primary danger-fill" data-delete-selected-houses>ลบที่เลือก</button></div>'
+    : "";
   const subtitle = selectingHouses
     ? '<p role="status" data-house-selection-count>' + houseSelectionLabel() + '</p>'
     : '<p>' + projects.length + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p>';
@@ -235,10 +218,10 @@ function homesPage() {
     return sum;
   }, { contract: 0n, remaining: 0n });
   return '<header class="heading with-action' + (selectingHouses ? ' house-selection-toolbar' : '') + '"><div><h1>บ้านทั้งหมด</h1>'
-    + subtitle + '</div><div class="house-actions">' + actions + '</div></header>'
+    + subtitle + '</div>' + actions + '</header>'
     + '<section class="summary homes-summary" aria-label="สรุปจำนวนเงินทุกบ้าน"><div><span class="subtle">จำนวนเงินรวมทุกบ้าน</span><strong>'
-    + money(totals.contract) + '</strong></div><div><span class="subtle">จำนวนเงินคงเหลือ</span><strong>'
-    + money(totals.remaining) + '</strong></div></section><div class="project-grid">'
+    + money(totals.contract) + '</strong></div><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>'
+    + money(totals.remaining) + '</strong></div></section><div class="project-grid" data-amount-mode="total">'
     + rankedProjects.map(({ project, next }) => {
       const nextTask = next
         ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
@@ -272,7 +255,7 @@ function moneyRows(project) {
             + '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
             + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button></span>')
         + '</li>').join("") + '</ul></details>' : "";
-    return '<div class="money-row"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
+    return '<div class="money-row' + (paid ? ' money-row-received' : '') + '"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
       + '<span class="payment-status' + tone + '">' + status + '</span>' + receipts
       + '</div><div class="money-amount"><div class="money-meta"><strong class="money-number">' + money(item.amountSatang)
       + '</strong><p class="subtle money-breakdown"><span>รับแล้ว ' + money(paid) + '</span>'
@@ -313,7 +296,8 @@ function projectPage() {
   if (detailTab === "งาน") {
     body = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
   } else if (detailTab === "เงินงวด") {
-    body = '<div class="detail-body">' + moneyRows(project) + '</div>';
+    body = '<div class="detail-body money-list">' + moneyRows(project)
+      + '<div class="money-received-total"><span>จำนวนเงินที่รับแล้วรวม</span><strong>' + money(received(project)) + '</strong></div></div>';
   } else {
     const docs = docsFor(project);
     const docRows = docs.map((doc, index) => {
@@ -336,7 +320,7 @@ function projectPage() {
     + '</strong></div></div></header>'
     + '<div class="detail-stage">' + tile("today") + '<div><span class="subtle">ขั้นตอนการทำงาน</span><strong>'
     + esc(stageName(project)) + '</strong></div><button class="text-button" data-change-stage>เปลี่ยนขั้นตอน</button></div>'
-    + '<div class="summary"><div><span class="subtle">จำนวนเงินคงเหลือ</span><strong>' + money(remainingAmount(project))
+    + '<div class="summary"><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>' + money(remainingAmount(project))
     + '</strong></div><div><span class="subtle">รับครบแล้ว</span><strong>' + paid + ' จาก ' + project.installments.length
     + ' งวด</strong></div></div>'
     + '<section aria-label="รายละเอียดบ้าน"><div class="detail-tabs" role="group" aria-label="หมวดรายละเอียด">' + tabs
@@ -376,7 +360,25 @@ function backupPage() {
 function render(animate = true) {
   const pages = { today: todayPage, homes: homesPage, detail: projectPage, calendar: calendarPage, backup: backupPage };
   $("#content").innerHTML = '<div' + (animate ? ' class="page"' : "") + '>' + pages[view]() + '</div>';
-  $("#add").hidden = view !== "calendar";
+  clearInterval(houseAmountTimer);
+  const grid = $("[data-amount-mode]");
+  if (grid?.childElementCount) {
+    houseAmountTimer = setInterval(() => {
+      grid.dataset.amountMode = grid.dataset.amountMode === "total" ? "balance" : "total";
+    }, 3000);
+  }
+  const isHomes = view === "homes";
+  const addLabel = isHomes ? "จัดการบ้าน" : "เพิ่มงาน";
+  addButton.hidden = view !== "calendar" && !(isHomes && !selectingHouses);
+  addButton.setAttribute("aria-label", addLabel);
+  addButton.title = addLabel;
+  if (isHomes) {
+    addButton.setAttribute("aria-haspopup", "dialog");
+    addButton.setAttribute("aria-expanded", houseMenu.open);
+  } else {
+    addButton.removeAttribute("aria-haspopup");
+    addButton.removeAttribute("aria-expanded");
+  }
   document.querySelectorAll(".nav-button").forEach((button) => {
     if (button.dataset.view === (view === "detail" ? "homes" : view)) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -621,7 +623,7 @@ function setHouseSelectionMode(active) {
   selectingHouses = active;
   selectedHouses.clear();
   render(false);
-  $(active ? ".project-open" : "[data-select-houses]")?.focus({ preventScroll: active });
+  (active ? $(".project-open") : addButton)?.focus({ preventScroll: true });
 }
 function toggleHouseSelection(button) {
   const id = button.dataset.project;
@@ -649,7 +651,7 @@ function confirmHouseDeletion() {
       selectedHouses.clear();
       closeDialog();
     });
-    if (saved) ($("[data-select-houses]") || $("[data-new-house]"))?.focus();
+    if (saved) addButton.focus({ preventScroll: true });
   });
 }
 function cancelPayment(itemId, paymentId) {
@@ -735,7 +737,20 @@ $("#dialog").addEventListener("close", () => {
 });
 $("#logo").innerHTML = icon("brand");
 $("#logo").dataset.view = "homes";
-$("#add").innerHTML = icon("plus");
+addButton.innerHTML = icon("plus");
+houseMenu.querySelector("[data-new-house]").insertAdjacentHTML("afterbegin", icon("plus"));
+houseMenu.querySelector("[data-select-houses]").insertAdjacentHTML("afterbegin", icon("pencil"));
+houseMenu.querySelector("[data-close-house-menu]").innerHTML = icon("close");
+houseMenu.addEventListener("click", (event) => {
+  if (event.target !== houseMenu) return;
+  const bounds = houseMenu.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+    houseMenu.close();
+  }
+});
+houseMenu.addEventListener("close", () => {
+  if (!houseMenu.open && view === "homes") addButton.setAttribute("aria-expanded", "false");
+});
 $("#nav").innerHTML = views.map(([viewName, title, symbol]) => '<button class="nav-button" data-view="' + viewName + '" aria-label="' + title
   + '" title="' + title + '">' + icon(symbol) + '</button>').join("");
 document.addEventListener("click", (event) => {
@@ -744,13 +759,22 @@ document.addEventListener("click", (event) => {
   const data = button.dataset;
   if (data.close !== undefined) closeDialog();
   if (!ready) return;
-  if (button.id === "add" || data.newProjectTask !== undefined) showForm();
-  if (data.newHouse !== undefined) showHouseForm();
-  if (data.selectHouses !== undefined) setHouseSelectionMode(true);
+  if (button === addButton) {
+    if (view === "homes" && !selectingHouses) {
+      houseMenu.showModal();
+      addButton.setAttribute("aria-expanded", "true");
+    } else if (view === "calendar") showForm();
+  }
+  if (data.newProjectTask !== undefined) showForm();
+  if (data.closeHouseMenu !== undefined) houseMenu.close();
+  if (data.newHouse !== undefined || data.selectHouses !== undefined) {
+    houseMenu.close();
+    if (data.newHouse !== undefined) showHouseForm();
+    else setHouseSelectionMode(true);
+  }
   if (data.finishHouseSelection !== undefined) setHouseSelectionMode(false);
   if (data.deleteSelectedHouses !== undefined) confirmHouseDeletion();
   if (data.changeStage !== undefined) showStageForm();
-  if (data.houseAmount) toggleHouseAmount(button);
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
   if (data.editPayment) showPaymentForm(data.installment, data.editPayment);
@@ -1100,10 +1124,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 14) {
+    if (window.localData?.revision !== 15) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=14";
+        script.src = "./data.js?v=15";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
