@@ -165,7 +165,14 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
 .doc-row, .money-row { border: 0; border-top: 1px solid var(--line); background: none; display: flex; justify-content: space-between; gap: 12px; align-items: center; text-align: left; color: var(--ink); width: 100%; min-height: 73px; padding: 11px 3px; overflow-wrap: anywhere; }
 .doc-row > span:last-child { flex: 1; }
 .doc-row .subtle { display: block; }
-.money-amount { flex: 0 1 auto; min-width: 0; max-width: 55%; text-align: right; font-variant-numeric: tabular-nums; }
+.money-row { display: grid; grid-template-columns: minmax(0,1fr) max-content; align-items: start; gap: 14px 18px; padding-block: 15px; }
+.money-main { min-width: 0; }
+.money-name { display: block; line-height: 1.55; overflow-wrap: anywhere; }
+.money-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; font-variant-numeric: tabular-nums; }
+.money-number { display: block; font-size: 1.09rem; }
+.money-number, .money-breakdown span, .money-pay, .detail-total strong, .summary > div:first-child strong { white-space: nowrap; overflow-wrap: normal; }
+.money-breakdown span { display: block; }
+.money-amount .money-pay { margin-top: 0; min-height: 44px; }
 .payment-status { display: table; border-radius: 7px; padding: 2px 7px; margin-top: 3px; font-size: .875rem; background: #f0f4fa; color: #4a607e; }
 .payment-status.paid { background: #e6f6ef; color: #1a6549; }
 .payment-status.partial { background: #fff1dd; color: #76470f; }
@@ -299,4 +306,16 @@ a.doc-row:focus-visible { outline: 3px solid #659cff; outline-offset: -3px; bord
 .reset-actions button { min-width: 88px; }
 @media (max-width: 510px) {
   .detail-toolbar { margin-inline: 10px; }
+}
+
+.detail-toolbar { flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.doc-row > span:last-child, .document-file-name { overflow-wrap: anywhere; }
+.pdf-actions { flex-wrap: wrap; }
+.pdf-actions a { text-decoration: none; }
+.pdf-actions .primary { display: inline-flex; align-items: center; justify-content: center; }
+@media (max-width: 520px) {
+  .money-row { grid-template-columns: minmax(0,1fr); gap: 8px; }
+  .money-amount { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; text-align: left; }
+  .money-amount .money-pay { margin-left: auto; }
+  .detail-total { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; width: 100%; }
 }

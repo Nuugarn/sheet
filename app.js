@@ -24,8 +24,9 @@ const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
 }[char]));
 const $ = (selector) => document.querySelector(selector);
 const backupPicker = $("#backup-file") || document.body.appendChild(Object.assign(document.createElement("input"), {
-  id: "backup-file", type: "file", accept: ".json,application/json", hidden: true
+  id: "backup-file", type: "file", hidden: true
 }));
+backupPicker.accept = ".zip,.json,application/zip,application/json";
 const currency = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
 const fractionalCurrency = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
 const formatDate = new Intl.DateTimeFormat("th-TH", { dateStyle: "full", timeZone: "Asia/Bangkok" });
@@ -47,8 +48,10 @@ let ready = false;
 let busy = false;
 let hasRecovery = false;
 let pendingRestore;
+let backupSelection = 0;
 let paymentContext;
 let pendingItemAction;
+let openPdfUrl;
 let resetTimer;
 let resetAvailableAt = Infinity;
 const workspaceChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("klao-workspace") : null;
@@ -69,6 +72,9 @@ const filterLabels = [["all", "ทั้งหมด"], ["open", "ยังไ�
 const projectFor = (id) => projects.find((project) => project.id === id);
 const compareTasks = (a, b) => a.date.localeCompare(b.date) || (a.time || "99").localeCompare(b.time || "99");
 const sorted = (list) => [...list].sort(compareTasks);
+const sizeFormat = new Intl.NumberFormat("th-TH", { maximumFractionDigits: 1 });
+const fileSize = (bytes) => bytes >= 1000000 ? sizeFormat.format(bytes / 1000000) + " MB"
+  : bytes >= 1000 ? sizeFormat.format(bytes / 1000) + " KB" : sizeFormat.format(bytes) + " B";
 const money = (amountSatang) => (amountSatang % 100 ? fractionalCurrency : currency).format(amountSatang / 100);
 const received = (project) => project.installments.reduce((total, item) => total + workspaceStore.paidAmount(item), 0);
 const stageName = (project) => project.stages[project.stageIndex];
@@ -198,11 +204,12 @@ function moneyRows(project) {
           : '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
             + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button>')
         + '</li>').join("") + '</ul></details>' : "";
-    return '<div class="money-row"><div><strong>งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
+    return '<div class="money-row"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
       + '<span class="payment-status' + tone + '">' + status + '</span>' + receipts
-      + '</div><div class="money-amount"><strong>' + money(item.amountSatang)
-      + '</strong><p class="subtle">รับแล้ว ' + money(paid) + (paid && left ? " · เหลือ " + money(left) : "")
-      + '</p>' + (left ? '<button class="outline-button small" data-payment="' + esc(item.id) + '">รับเงิน</button>' : "") + '</div></div>';
+      + '</div><div class="money-amount"><div class="money-meta"><strong class="money-number">' + money(item.amountSatang)
+      + '</strong><p class="subtle money-breakdown"><span>รับแล้ว ' + money(paid) + '</span>'
+      + (paid && left ? '<span>เหลือ ' + money(left) + '</span>' : "") + '</p></div>'
+      + (left ? '<button class="outline-button small money-pay" data-payment="' + esc(item.id) + '">รับเงิน</button>' : "") + '</div></div>';
   }).join("");
 }
 function docsFor(project) {
@@ -219,7 +226,7 @@ function docsFor(project) {
 const projectActions = {
   "งาน": ["new-project-task", "เพิ่มงาน"],
   "เงินงวด": ["new-installment", "เพิ่มงวดเงิน"],
-  "เอกสาร": ["new-doc", "แนบลิงก์เอกสาร"]
+  "เอกสาร": ["new-pdf", "เพิ่ม PDF"]
 };
 function projectPage() {
   const project = projectFor(projectId);
@@ -230,7 +237,9 @@ function projectPage() {
   ).join("");
   const [action, label] = projectActions[detailTab];
   const toolbar = '<div class="detail-actions detail-toolbar"><button type="button" class="outline-button" data-' + action
-    + '>' + icon("plus") + '<span>' + label + '</span></button></div>';
+    + '>' + icon("plus") + '<span>' + label + '</span></button>'
+    + (detailTab === "เอกสาร" ? '<button type="button" class="text-button" data-new-doc>แนบลิงก์เอกสาร</button>' : "")
+    + '</div>';
   let body;
   if (detailTab === "งาน") {
     body = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
@@ -239,12 +248,15 @@ function projectPage() {
   } else {
     const docs = docsFor(project);
     const docRows = docs.map((doc, index) => {
+      const subtitle = doc.pdf ? "PDF · " + fileSize(doc.pdf.size) : doc.url ? "เปิดลิงก์เอกสาร" : "เอกสารตัวอย่าง";
       const label = tile("file") + '<span><strong>' + esc(doc.title)
-        + '</strong><small class="subtle">' + (doc.url ? "เปิดลิงก์เอกสาร" : "เอกสารตัวอย่าง") + '</small></span>';
-      return doc.url
-        ? '<div class="doc-entry"><a class="doc-row" target="_blank" rel="noopener noreferrer" href="' + esc(doc.url) + '">' + label
-          + '</a>' + moreButton("doc", doc.id, "จัดการเอกสาร " + doc.title) + '</div>'
-        : '<button class="doc-row" data-doc="' + index + '">' + label + '</button>';
+        + '</strong><small class="subtle">' + esc(subtitle) + '</small></span>';
+      const control = doc.url
+        ? '<a class="doc-row" target="_blank" rel="noopener noreferrer" href="' + esc(doc.url) + '">' + label + '</a>'
+        : '<button type="button" class="doc-row" data-doc="' + index + '">' + label + '</button>';
+      return doc.id
+        ? '<div class="doc-entry">' + control + moreButton("doc", doc.id, "จัดการเอกสาร " + doc.title) + '</div>'
+        : control;
     }).join("");
     body = '<div class="detail-body">' + (docRows || '<p class="empty">ยังไม่มีเอกสาร</p>') + '</div>';
   }
@@ -282,9 +294,9 @@ function calendarPage() {
 function backupPage() {
   return '<header class="heading"><h1>สำรองข้อมูล</h1></header>'
     + '<div class="backup-grid"><section class="panel backup-panel"><h2>ส่งออกข้อมูล</h2>'
-    + '<p class="subtle">ดาวน์โหลดไฟล์ JSON รวมบ้าน งาน งวดเงิน และลิงก์เอกสาร</p>'
+    + '<p class="subtle">ดาวน์โหลด ZIP รวมข้อมูลบ้าน งาน งวดเงิน และไฟล์ PDF</p>'
     + '<button class="outline-button" data-export>' + icon("download") + '<span>ดาวน์โหลดไฟล์สำรอง</span></button></section>'
-    + '<section class="panel backup-panel"><h2>กู้คืนข้อมูล</h2><p class="subtle">เลือกไฟล์สำรองจากเครื่องหรือ Google Drive</p>'
+    + '<section class="panel backup-panel"><h2>กู้คืนข้อมูล</h2><p class="subtle">เลือกไฟล์ ZIP หรือไฟล์สำรอง JSON จากเวอร์ชันก่อน</p>'
     + '<button class="outline-button" data-import>เลือกไฟล์สำรอง</button>'
     + (hasRecovery ? '<button class="text-button" data-revert>กลับไปข้อมูลก่อนกู้คืน</button>' : "")
     + '</section></div><section class="panel backup-panel reset-panel"><h2>รีเซ็ตแอป</h2>'
@@ -313,8 +325,15 @@ function clearResetTimer() {
   clearInterval(resetTimer);
   resetAvailableAt = Infinity;
 }
+function releasePdfUrl() {
+  if (!openPdfUrl) return;
+  const previousUrl = openPdfUrl;
+  openPdfUrl = undefined;
+  setTimeout(() => URL.revokeObjectURL(previousUrl), 1000);
+}
 function showDialog(title, body) {
   clearResetTimer();
+  releasePdfUrl();
   const dialog = $("#dialog");
   dialog.innerHTML = '<div class="dialog-head"><h2 id="dialog-title">' + title + '</h2>' + closeControl + '</div>' + body;
   dialog.querySelector("form")?.setAttribute("method", "dialog");
@@ -364,7 +383,7 @@ function showItemMenu(kind, id) {
   const taskMenu = kind === "task";
   const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(projectId)?.documents.find((doc) => doc.id === id);
   if (!item) return;
-  const label = taskMenu ? "งาน" : "ลิงก์เอกสาร";
+  const label = taskMenu ? "งาน" : item.pdf ? " PDF" : "ลิงก์เอกสาร";
   const ref = ' data-kind="' + kind + '" data-item="' + esc(id) + '"';
   showDialog("จัดการ" + label, '<p class="item-title">' + esc(item.title) + '</p><div class="item-actions">'
     + '<button type="button" class="outline-button" data-edit-item' + ref + '>แก้ไข' + label + '</button>'
@@ -375,6 +394,17 @@ function showDocument(index) {
   const project = projectFor(projectId);
   const doc = docsFor(project)[index];
   if (!doc || doc.url) return;
+  if (doc.pdf) {
+    showDialog(esc(doc.title), '<p class="subtle document-file-name">' + esc(doc.fileName) + ' · ' + fileSize(doc.pdf.size)
+      + '</p><div class="dialog-actions pdf-actions"><a class="outline-button" id="pdf-download">' + icon("download")
+      + '<span>ดาวน์โหลด PDF</span></a><a class="primary" id="pdf-open" target="_blank" rel="noopener noreferrer">เปิด PDF</a></div>');
+    openPdfUrl = URL.createObjectURL(doc.pdf);
+    $("#pdf-open").href = openPdfUrl;
+    const download = $("#pdf-download");
+    download.href = openPdfUrl;
+    download.download = doc.fileName;
+    return;
+  }
   showDialog(esc(doc.title), '<div class="document"><p class="subtle">เอกสารตัวอย่าง · Klao Built-in</p><strong>' + esc(project.name) + '</strong>'
     + (doc.note ? '<p>' + esc(doc.note) + '</p>' : "") + '<strong>ยอดเงิน ' + money(doc.amountSatang) + '</strong></div>');
 }
@@ -417,6 +447,16 @@ function showPaymentForm(id) {
     + '<label>วันที่รับเงิน<input name="date" type="date" required value="' + dayKey.format(new Date()) + '"></label>'
     + submitActions("ยืนยันรับเงินครบ") + '</form>');
 }
+function showPdfForm(doc = null) {
+  showDialog(doc ? "แก้ไข PDF" : "เพิ่ม PDF", '<form id="pdf-form" class="form">'
+    + (doc ? '<input type="hidden" name="recordId" value="' + esc(doc.id) + '">' : "")
+    + '<label>' + (doc ? "เลือกไฟล์ PDF ใหม่" : "เลือกไฟล์ PDF") + '<input name="pdf" type="file" accept="application/pdf,.pdf"'
+    + (doc ? "" : " required") + '></label>'
+    + (doc ? '<p class="subtle document-file-name">ไฟล์ปัจจุบัน ' + esc(doc.fileName) + '</p>' : "")
+    + '<label>ชื่อเอกสาร<input name="title" maxlength="120" value="' + esc(doc?.title)
+    + '" placeholder="ใช้ชื่อไฟล์ถ้าเว้นว่าง"></label>'
+    + submitActions(doc ? "บันทึกการแก้ไข" : "บันทึก PDF") + '</form>');
+}
 function showDocForm(doc = null) {
   showDialog(doc ? "แก้ไขลิงก์เอกสาร" : "แนบลิงก์เอกสาร", '<form id="doc-form" class="form">'
     + (doc ? '<input type="hidden" name="recordId" value="' + esc(doc.id) + '">' : "")
@@ -436,7 +476,8 @@ function editItem(kind, id) {
     if (task) showForm(task);
   } else {
     const doc = projectFor(projectId)?.documents.find((entry) => entry.id === id);
-    if (doc) showDocForm(doc);
+    if (doc?.pdf) showPdfForm(doc);
+    else if (doc) showDocForm(doc);
   }
 }
 function removeItem(kind, id) {
@@ -444,7 +485,7 @@ function removeItem(kind, id) {
   const taskMenu = kind === "task";
   const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(house)?.documents.find((doc) => doc.id === id);
   if (!item) return;
-  const label = taskMenu ? "งาน" : "ลิงก์เอกสาร";
+  const label = taskMenu ? "งาน" : item.pdf ? " PDF" : "ลิงก์เอกสาร";
   confirmItemAction("ลบ" + label + "?", "ลบ “" + esc(item.title) + "” ออกจากแอปหรือไม่?", "ยืนยันลบ" + label, () =>
     commit(() => workspaceStore.update((workspace) => {
       const rows = taskMenu ? workspace.tasks : projectIn(workspace, house)?.documents;
@@ -474,22 +515,28 @@ function cancelPayment(itemId, paymentId) {
   });
 }
 async function downloadBackup() {
+  if (!ready || busy) return;
+  busy = true;
+  updateControls();
   try {
     const data = await workspaceStore.read();
-    const file = new Blob([workspaceStore.exportBackup(data)], { type: "application/json" });
+    const file = await workspaceStore.exportArchive(data);
     const url = URL.createObjectURL(file);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "klao-backup-" + dayKey.format(new Date()) + ".json";
+    link.download = "klao-backup-" + dayKey.format(new Date()) + ".zip";
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
     showToast("ดาวน์โหลดไฟล์สำรองแล้ว");
   } catch {
     showToast("ดาวน์โหลดไฟล์สำรองไม่ได้");
+  } finally {
+    busy = false;
+    updateControls();
   }
 }
 function showResetDialog() {
-  showDialog("รีเซ็ตข้อมูลทั้งหมด?", '<p class="reset-description">การรีเซ็ตจะลบบ้าน งาน นัด งวดเงิน ประวัติรับเงิน และลิงก์เอกสารทั้งหมดในเครื่องนี้ รวมถึงข้อมูลก่อนกู้คืนที่แอปเก็บไว้</p>'
+  showDialog("รีเซ็ตข้อมูลทั้งหมด?", '<p class="reset-description">การรีเซ็ตจะลบบ้าน งาน นัด งวดเงิน ประวัติรับเงิน ไฟล์ PDF และลิงก์เอกสารทั้งหมดในเครื่องนี้ รวมถึงข้อมูลก่อนกู้คืนที่แอปเก็บไว้</p>'
     + '<p class="subtle notes">หากต้องการนำข้อมูลกลับมา ให้ส่งออกไฟล์สำรองก่อนรีเซ็ต</p>'
     + '<div class="dialog-actions reset-actions"><button type="button" class="primary danger-fill" data-confirm="reset" disabled>รีเซ็ต (5)</button>'
     + '<button type="button" class="outline-button" data-close data-reset-cancel>ยกเลิก</button></div>');
@@ -511,7 +558,10 @@ function closeDialog() {
   $("#dialog").close();
 }
 $("#dialog").addEventListener("close", () => {
-  if (!$("#dialog").open) clearResetTimer();
+  if (!$("#dialog").open) {
+    clearResetTimer();
+    releasePdfUrl();
+  }
 });
 $("#logo").innerHTML = icon("brand");
 $("#logo").dataset.view = "homes";
@@ -530,6 +580,7 @@ document.addEventListener("click", (event) => {
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
   if (data.newDoc !== undefined) showDocForm();
+  if (data.newPdf !== undefined) showPdfForm();
   if (data.itemMenu) showItemMenu(data.itemMenu, data.item);
   if (data.editItem !== undefined) editItem(data.kind, data.item);
   if (data.removeItem !== undefined) removeItem(data.kind, data.item);
@@ -737,9 +788,39 @@ function saveDoc(form) {
     }
   }), "บันทึกลิงก์แล้ว", closeDialog);
 }
+function savePdf(form) {
+  const house = projectId;
+  const id = form.get("recordId");
+  const file = form.get("pdf");
+  const name = form.get("title").trim();
+  void commit(async () => {
+    let attachment;
+    if (file?.size) {
+      let pdf;
+      try {
+        pdf = await workspaceStore.readPdf(file);
+      } catch {
+        throw new InputError("กรุณาเลือกไฟล์ PDF ที่เปิดได้");
+      }
+      attachment = { pdf, fileName: file.name };
+    }
+    return workspaceStore.update((workspace) => {
+      const project = projectIn(workspace, house);
+      if (!project) throw new InputError("ไม่พบบ้านนี้แล้ว");
+      const existing = project.documents.find((doc) => doc.id === id);
+      if (id && !existing?.pdf) throw new InputError("ไม่พบ PDF นี้แล้ว");
+      if (!existing && !attachment) throw new InputError("กรุณาเลือกไฟล์ PDF");
+      const fileName = attachment?.fileName ?? existing.fileName;
+      const title = name || fileName.replace(/\.pdf$/i, "").trim().slice(0, 120) || "เอกสาร PDF";
+      if (existing) Object.assign(existing, attachment, { title });
+      else project.documents.push({ id: workspaceStore.createId(), title, ...attachment });
+    });
+  }, "บันทึก PDF แล้ว", closeDialog);
+}
+
 const formHandlers = {
   "add-form": saveTask, "house-form": saveHouse, "stage-form": saveHouseStage,
-  "installment-form": saveInstallment, "payment-form": savePayment, "doc-form": saveDoc
+  "installment-form": saveInstallment, "payment-form": savePayment, "doc-form": saveDoc, "pdf-form": savePdf
 };
 document.addEventListener("submit", (event) => {
   if (!event.target.closest("#dialog")) return;
@@ -764,16 +845,19 @@ $("#dialog").addEventListener("input", (event) => {
 backupPicker.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file || busy || !ready) return;
+  const selected = ++backupSelection;
   try {
-    const incoming = workspaceStore.parseBackup(await file.text());
-    if (view !== "backup" || $("#dialog").open) return;
+    const incoming = await workspaceStore.readBackup(file);
+    if (selected !== backupSelection || view !== "backup" || $("#dialog").open) return;
     pendingRestore = incoming;
-    showDialog("กู้คืนข้อมูล", '<p>พบ ' + incoming.projects.length + ' บ้าน และ ' + incoming.tasks.length + ' งานในไฟล์นี้</p>'
+    const pdfCount = incoming.projects.reduce((count, project) => count + project.documents.filter((doc) => doc.pdf).length, 0);
+    showDialog("กู้คืนข้อมูล", '<p>พบ ' + incoming.projects.length + ' บ้าน · ' + incoming.tasks.length
+      + ' งาน · ' + pdfCount + ' ไฟล์ PDF</p>'
       + '<p class="subtle notes">ชุดนี้จะแทนข้อมูลที่เปิดอยู่ แอปจะเก็บข้อมูลชุดเดิมไว้ให้ย้อนกลับได้</p>'
       + '<div class="dialog-actions"><button type="button" class="text-button" data-close>ยกเลิก</button>'
       + '<button type="button" class="primary" data-confirm="restore">ยืนยันกู้คืน</button></div>');
   } catch {
-    showToast("ไฟล์สำรองไม่ถูกต้อง ข้อมูลเดิมยังอยู่");
+    if (selected === backupSelection) showToast("ไฟล์สำรองไม่ถูกต้อง ข้อมูลเดิมยังอยู่");
   }
 });
 workspaceChannel?.addEventListener("message", async () => {
@@ -816,10 +900,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 9) {
+    if (window.localData?.revision !== 10) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=9";
+        script.src = "./data.js?v=10";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);

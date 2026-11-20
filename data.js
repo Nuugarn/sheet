@@ -2,13 +2,14 @@
 
 window.localData = (() => {
   const appName = "klao-built-in";
-  const version = 3;
+  const version = 4;
   const currentKey = "current";
   const previousKey = "before-restore";
   const legacyKey = "klao-work-prototype-tasks-v1";
   const storeName = "workspace";
   const stages = ["วัดหน้างาน", "ออกแบบและอนุมัติ", "ผลิต", "ติดตั้ง", "ตรวจงาน", "ส่งมอบแล้ว"];
   let database;
+  let zipLoading;
 
   const createId = () => crypto.randomUUID();
   const validId = (value) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value);
@@ -37,6 +38,22 @@ window.localData = (() => {
     }
   }
 
+  async function readPdf(file) {
+    if (!(file instanceof Blob) || !file.size) throw new Error("Empty PDF");
+    const header = await file.slice(0, 1024).text();
+    if (!/^%PDF-\d+\.\d+/.test(header.trimStart())) throw new Error("Invalid PDF");
+    return file.slice(0, file.size, "application/pdf");
+  }
+
+  function validDocument(doc, fromArchive) {
+    if (!doc || !validId(doc.id) || !validText(doc.title, 120, true)) return false;
+    if (doc.url !== undefined) return validLink(doc.url) && doc.pdf === undefined && doc.pdfSize === undefined;
+    if (!validText(doc.fileName, 512, true)) return false;
+    return fromArchive
+      ? Number.isSafeInteger(doc.pdfSize) && doc.pdfSize > 0
+      : doc.pdf instanceof Blob && doc.pdf.type === "application/pdf" && doc.pdf.size > 0;
+  }
+
   function toSatang(value) {
     const input = String(value).trim();
     if (!/^\d+(?:\.\d{1,2})?$/.test(input)) return NaN;
@@ -45,7 +62,7 @@ window.localData = (() => {
     return validMoney(amount) ? amount : NaN;
   }
 
-  function validProject(project) {
+  function validProject(project, fromArchive) {
     return project && validId(project.id) && validText(project.name, 100, true)
       && validText(project.place, 160) && validMoney(project.contractSatang)
       && typeof project.sample === "boolean"
@@ -57,8 +74,7 @@ window.localData = (() => {
       && Array.isArray(project.installments) && project.installments.every(validInstallment)
       && uniqueIds(project.installments)
       && sum(project.installments, "amountSatang") <= project.contractSatang
-      && Array.isArray(project.documents) && project.documents.every((doc) =>
-        doc && validId(doc.id) && validText(doc.title, 120, true) && validLink(doc.url))
+      && Array.isArray(project.documents) && project.documents.every((doc) => validDocument(doc, fromArchive))
       && uniqueIds(project.documents);
   }
 
@@ -83,8 +99,8 @@ window.localData = (() => {
         : project && project.id === task.project && (task.stage === null || validIndex(task.stage, project.stages.length)));
   }
 
-  function validWorkspace(data) {
-    if (!data || !Array.isArray(data.projects) || !data.projects.every(validProject)
+  function validWorkspace(data, fromArchive = false) {
+    if (!data || !Array.isArray(data.projects) || !data.projects.every((project) => validProject(project, fromArchive))
         || !uniqueIds(data.projects) || !Array.isArray(data.tasks)) return false;
     const projectById = new Map(data.projects.map((project) => [project.id, project]));
     return data.tasks.every((task) => validTask(task, projectById.get(task?.project))) && uniqueIds(data.tasks);
@@ -248,20 +264,95 @@ window.localData = (() => {
     return data;
   }
 
-  function exportBackup(data) {
-    return JSON.stringify({ app: appName, version, exportedAt: new Date().toISOString(), data }, null, 2);
+  function zipLibrary() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    if (!zipLoading) {
+      zipLoading = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "./vendor/jszip.min.js?v=10";
+        script.onload = () => resolve(window.JSZip);
+        script.onerror = () => {
+          zipLoading = undefined;
+          script.remove();
+          reject(new Error("Cannot load ZIP library"));
+        };
+        document.head.append(script);
+      });
+    }
+    return zipLoading;
   }
 
-  function parseBackup(text) {
+  const attachmentPath = (project, doc) => "pdf/" + project.id + "/" + doc.id + ".pdf";
+
+  async function exportArchive(workspace) {
+    const JSZip = await zipLibrary();
+    const zip = new JSZip();
+    const data = {
+      ...workspace,
+      projects: workspace.projects.map((project) => ({
+        ...project,
+        documents: project.documents.map((doc) => {
+          if (!doc.pdf) return doc;
+          zip.file(attachmentPath(project, doc), doc.pdf, { createFolders: false });
+          const { pdf, ...metadata } = doc;
+          return { ...metadata, pdfSize: pdf.size };
+        })
+      }))
+    };
+    zip.file("backup.json", JSON.stringify({ app: appName, version, exportedAt: new Date().toISOString(), data }, null, 2));
+    return zip.generateAsync({ type: "blob", compression: "STORE", mimeType: "application/zip" });
+  }
+
+  function parseManifest(text, fromArchive = false) {
     const backup = JSON.parse(text);
-    if (backup?.app !== appName || ![1, 2, version].includes(backup.version) || !validWorkspace(backup.data)) {
+    const formats = fromArchive ? [version] : [1, 2, 3];
+    if (backup?.app !== appName || !formats.includes(backup.version) || !validWorkspace(backup.data, fromArchive)) {
       throw new Error("Invalid backup");
     }
     return backup.data;
   }
 
+  function exportBackup(data) {
+    if (data.projects.some((project) => project.documents.some((doc) => doc.pdf))) {
+      throw new Error("PDF attachments require ZIP backup");
+    }
+    return JSON.stringify({ app: appName, version: 3, exportedAt: new Date().toISOString(), data }, null, 2);
+  }
+
+  async function readBackup(file) {
+    const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    if (header[0] !== 0x50 || header[1] !== 0x4b || header[2] !== 0x03 || header[3] !== 0x04) {
+      return parseManifest(await file.text());
+    }
+
+    const JSZip = await zipLibrary();
+    const zip = await JSZip.loadAsync(file, { checkCRC32: true });
+    const manifest = zip.file("backup.json");
+    if (!manifest) throw new Error("Missing backup manifest");
+    const data = parseManifest(await manifest.async("string"), true);
+    const expected = new Set(["backup.json"]);
+    for (const project of data.projects) {
+      for (let index = 0; index < project.documents.length; index += 1) {
+        const document = project.documents[index];
+        if (document.url) continue;
+        const path = attachmentPath(project, document);
+        const entry = zip.file(path);
+        expected.add(path);
+        if (!entry || document.pdfSize > file.size) throw new Error("Missing PDF");
+        const blob = await entry.async("blob");
+        if (document.pdfSize !== blob.size) throw new Error("Incorrect PDF size");
+        const { pdfSize, ...metadata } = document;
+        project.documents[index] = { ...metadata, pdf: await readPdf(blob) };
+      }
+    }
+    if (Object.values(zip.files).some((entry) => !entry.dir && !expected.has(entry.name))) {
+      throw new Error("Unexpected backup file");
+    }
+    return data;
+  }
+
   return {
-    revision: 9, stages, createId, validDate, validLink, validMoney, validTask, toSatang,
-    advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, reset, exportBackup, parseBackup
+    revision: 10, stages, createId, validDate, validLink, readPdf, validMoney, validTask, toSatang,
+    advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, reset, exportArchive, readBackup, exportBackup, parseBackup: parseManifest
   };
 })();
