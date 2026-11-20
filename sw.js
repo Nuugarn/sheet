@@ -1,5 +1,5 @@
 const prefix = "klao-work-preview-";
-const revision = "5";
+const revision = "6";
 const cacheName = prefix + revision;
 const scope = self.registration.scope;
 const home = new URL("./", scope);
@@ -7,6 +7,7 @@ const index = new URL("./index.html", scope);
 const assets = [
   "style.css?v=" + revision,
   "app.js?v=" + revision,
+  "data.js?v=" + revision,
   "manifest.webmanifest",
   "icon-192.png",
   "icon-512.png"
