@@ -10,6 +10,7 @@ const paths = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  wallet: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M21 10h-5a2 2 0 0 0 0 4h5m-4-2h.01"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/>',
   left: '<path d="m15 6-6 6 6 6"/>',
@@ -74,7 +75,8 @@ const views = [
 ];
 const filterLabels = [["all", "ทั้งหมด"], ["open", "ยังไม่เสร็จ"], ["done", "เสร็จแล้ว"]];
 const projectFor = (id) => projects.find((project) => project.id === id);
-const sorted = (list) => [...list].sort((a, b) => a.date.localeCompare(b.date) || (a.time || "99").localeCompare(b.time || "99"));
+const compareTasks = (a, b) => a.date.localeCompare(b.date) || (a.time || "99").localeCompare(b.time || "99");
+const sorted = (list) => [...list].sort(compareTasks);
 const money = (amount) => currency.format(amount);
 const received = (project) => project.installments.reduce((total, row) => total + row[2], 0);
 const tile = (name, tone = "") => '<span class="tile ' + tone + '">' + icon(name) + '</span>';
@@ -136,24 +138,39 @@ function todayPage() {
     + projects.map((project) => '<button class="site-preview" data-project="' + project.id + '">' + tile("homes") + '<span><strong>' + project.name + '</strong><span class="subtle">' + project.stage + '</span></span></button>').join("") + '</section></div>';
 }
 function homesPage() {
-  return '<header class="heading"><h1>บ้านทั้งหมด</h1><p>' + projects.length + ' บ้านลูกค้า</p></header><div class="project-grid">'
-    + projects.map((project) => {
-      const next = sorted(tasks.filter((task) => task.project === project.id && !task.done && task.date >= today))[0];
-      const nextTask = next ? esc(next.title) + " · " + formatShortDate.format(atNoon(next.date)) : "ยังไม่มีงานถัดไป";
+  const upcoming = sorted(tasks.filter((task) => !task.done && task.date >= today));
+  const rankedProjects = projects.map((project) => ({
+    project,
+    next: upcoming.find((task) => task.project === project.id)
+  })).sort((a, b) => {
+    if (a.next && b.next) return compareTasks(a.next, b.next);
+    return Number(!a.next) - Number(!b.next);
+  });
+  return '<header class="heading"><h1>บ้านทั้งหมด</h1><p>' + projects.length
+    + ' บ้านลูกค้า · เรียงตามนัดถัดไป</p></header><div class="project-grid">'
+    + rankedProjects.map(({ project, next }) => {
+      const nextTask = next
+        ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
+          + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
+        : '<span>ยังไม่มีนัดถัดไป</span>';
       return '<button class="project" data-project="' + project.id + '">'
         + '<span class="project-head">' + tile("homes") + '<span class="project-heading"><strong class="project-name">' + esc(project.name)
         + '</strong><span class="subtle">' + esc(project.place) + '</span></span></span>'
         + '<span class="project-stage">' + esc(project.stage) + '</span>'
         + '<span class="project-price"><span class="subtle">ราคารวม</span><strong class="value">' + money(project.contract) + '</strong></span>'
-        + '<span class="project-next">' + icon("calendar") + '<span>' + nextTask + '</span></span></button>';
+        + '<span class="project-next">' + icon("calendar") + nextTask + '</span></button>';
     }).join("") + '</div>';
 }
 function moneyRows(project) {
-  return project.installments.map(([label, amount, paid, billed], index) =>
-    '<div class="money-row"><div><strong>งวด ' + (index + 1) + ' · ' + label + '</strong><p class="subtle">'
-    + (paid === amount ? "รับครบแล้ว" : paid > 0 ? "รับบางส่วน" : billed ? "วางบิลแล้ว" : "ยังไม่วางบิล") + '</p></div><div><strong>'
-    + money(amount) + '</strong><p class="subtle">รับแล้ว ' + money(paid) + '</p></div></div>'
-  ).join("");
+  return project.installments.map(([label, amount, paid, billed], index) => {
+    const complete = paid === amount;
+    const status = complete ? "รับครบแล้ว" : paid > 0 ? "รับบางส่วน" : billed ? "วางบิลแล้ว" : "ยังไม่วางบิล";
+    const tone = complete ? " paid" : paid > 0 ? " partial" : "";
+    const receipt = "รับแล้ว " + money(paid) + (paid > 0 && !complete ? " · เหลือ " + money(amount - paid) : "");
+    return '<div class="money-row"><div><strong>งวด ' + (index + 1) + ' · ' + esc(label) + '</strong>'
+      + '<span class="payment-status' + tone + '">' + status + '</span></div><div class="money-amount"><strong>'
+      + money(amount) + '</strong><p class="subtle">' + receipt + '</p></div></div>';
+  }).join("");
 }
 function docsFor(project) {
   const docs = [{ title: "ใบเสนอราคา", amount: project.contract }];
@@ -164,18 +181,33 @@ function docsFor(project) {
 }
 function projectPage() {
   const project = projectFor(projectId);
-  const billed = project.installments.filter((row) => row[3]).length;
   const paid = project.installments.filter((row) => row[1] === row[2]).length;
-  const docs = docsFor(project);
-  const work = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
-  const documents = docs.map((doc, index) => '<button class="doc-row" data-doc="' + index + '">' + tile("file") + '<span><strong>' + doc.title + '</strong><span class="subtle"> · ตัวอย่าง</span></span></button>').join("");
-  const body = detailTab === "งาน" ? work : '<div class="detail-body">' + (detailTab === "เงินงวด" ? moneyRows(project) : documents) + '</div>';
-  return '<header class="heading"><button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button><h1>' + project.name
-    + '</h1><p>' + project.place + ' · ' + project.stage + '</p></header><div class="summary">'
-    + '<div><span class="subtle">ยอดที่ยังต้องรับ</span><strong>' + money(project.contract - received(project)) + '</strong></div>'
-    + '<div><span class="subtle">วางบิลแล้ว</span><strong>' + billed + '/' + project.installments.length + ' งวด</strong></div>'
-    + '<div><span class="subtle">รับครบแล้ว</span><strong>' + paid + '/' + project.installments.length + ' งวด</strong></div></div>'
-    + '<section class="panel detail-panel"><div class="filters">' + pills(["งาน", "เงินงวด", "เอกสาร"].map((tab) => [tab, tab]), "detail", detailTab) + '</div>' + body + '</section>';
+  const tabs = [["งาน", "today"], ["เงินงวด", "wallet"], ["เอกสาร", "file"]].map(([tab, symbol]) =>
+    '<button type="button" class="detail-tab" data-detail="' + tab + '" aria-pressed="' + (tab === detailTab) + '">'
+    + icon(symbol) + '<span>' + tab + '</span></button>'
+  ).join("");
+  let body;
+  if (detailTab === "งาน") {
+    body = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
+  } else if (detailTab === "เงินงวด") {
+    body = '<div class="detail-body">' + moneyRows(project) + '</div>';
+  } else {
+    body = '<div class="detail-body">' + docsFor(project).map((doc, index) =>
+      '<button class="doc-row" data-doc="' + index + '">' + tile("file") + '<span><strong>' + esc(doc.title)
+      + '</strong><small class="subtle">เอกสารตัวอย่าง</small></span></button>'
+    ).join("") + '</div>';
+  }
+  return '<div class="project-detail"><header class="detail-header"><button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
+    + '<div class="detail-title"><div><h1>' + esc(project.name) + '</h1><p class="subtle">' + esc(project.place)
+    + '</p></div><div class="detail-total"><span class="subtle">ราคารวมของงานนี้</span><strong>' + money(project.contract)
+    + '</strong></div></div></header>'
+    + '<div class="detail-stage">' + tile("today") + '<div><span class="subtle">ขั้นตอนการทำงาน</span><strong>'
+    + esc(project.stage) + '</strong></div></div>'
+    + '<div class="summary"><div><span class="subtle">ยอดเงินที่เหลือ</span><strong>' + money(project.contract - received(project))
+    + '</strong></div><div><span class="subtle">รับครบแล้ว</span><strong>' + paid + ' จาก ' + project.installments.length
+    + ' งวด</strong></div></div>'
+    + '<section aria-label="รายละเอียดบ้าน"><div class="detail-tabs" role="group" aria-label="หมวดรายละเอียด">' + tabs
+    + '</div><div class="panel detail-panel">' + body + '</div></section></div>';
 }
 function calendarPage() {
   const firstDay = atNoon(monthStart).getUTCDay();

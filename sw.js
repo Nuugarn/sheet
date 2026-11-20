@@ -1,5 +1,5 @@
 const prefix = "klao-work-preview-";
-const revision = "4";
+const revision = "5";
 const cacheName = prefix + revision;
 const scope = self.registration.scope;
 const home = new URL("./", scope);
