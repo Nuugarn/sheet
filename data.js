@@ -269,7 +269,7 @@ window.localData = (() => {
     if (!zipLoading) {
       zipLoading = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./vendor/jszip.min.js?v=15";
+        script.src = "./vendor/jszip.min.js?v=16";
         script.onload = () => resolve(window.JSZip);
         script.onerror = () => {
           zipLoading = undefined;
@@ -352,7 +352,7 @@ window.localData = (() => {
   }
 
   return {
-    revision: 15, stages, createId, validDate, validLink, readPdf, validMoney, validTask, toSatang,
+    revision: 16, stages, createId, validDate, validLink, readPdf, validMoney, validTask, toSatang,
     advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, reset, exportArchive, readBackup, exportBackup, parseBackup: parseManifest
   };
 })();

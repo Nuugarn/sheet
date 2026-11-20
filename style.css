@@ -188,6 +188,7 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
 .summary > div { min-width: 0; padding: 14px 18px; }
 .summary > div + div { border-left: 1px solid #cadcf8; }
 .summary strong { display: block; color: #173f83; font-size: clamp(1.13rem, 3.6vw, 1.64rem); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; line-height: 1.35; }
+.received-note { margin-top: 3px; color: var(--green-ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .balance-summary { background: var(--green-pale); }
 .balance-summary .subtle, .balance-summary strong { color: var(--green-ink); }
 .detail-tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; margin-bottom: 10px; padding: 5px; background: #f0f4fa; border-radius: 13px; }
@@ -216,11 +217,6 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
 .money-list { display: grid; gap: 8px; padding-block: 10px 14px; }
 .money-row { display: grid; grid-template-columns: minmax(0,1fr) max-content; align-items: start; gap: 14px 18px; padding: 13px 10px; border: 1px solid var(--line); border-radius: 13px; }
 .money-row-received { background: var(--green-pale); border-color: var(--green-line); }
-.money-received-total {
-  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 14px;
-  margin-top: 4px; padding: 12px 10px; border-top: 1px solid var(--line); color: var(--green-ink); font-weight: 700;
-}
-.money-received-total strong { font-size: 1.16rem; overflow-wrap: anywhere; min-width: 0; }
 .money-main { min-width: 0; }
 .money-name { display: block; line-height: 1.55; overflow-wrap: anywhere; }
 .money-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -260,7 +256,15 @@ dialog::backdrop { background: #0e234966; }
   border: 0; background: transparent; box-shadow: none;
 }
 #house-menu[open] { display: grid; justify-items: end; gap: 9px; animation: page-in .27s ease-out both; }
-#house-menu::backdrop { background: #edf4ffcc; }
+#house-menu[open]::backdrop {
+  background: #edf4ffcc;
+  backdrop-filter: blur(4px);
+  animation: house-menu-backdrop-in .62s ease-out both;
+}
+@keyframes house-menu-backdrop-in {
+  from { background: #edf4ff00; backdrop-filter: blur(0); }
+  to { background: #edf4ffcc; backdrop-filter: blur(4px); }
+}
 .house-menu-action {
   display: flex; align-items: center; gap: 10px; min-height: 49px; min-width: 121px;
   padding: 10px 16px; border: 1px solid #bad4f8; border-radius: 99px;

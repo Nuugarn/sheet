@@ -283,6 +283,7 @@ const projectActions = {
 function projectPage() {
   const project = projectFor(projectId);
   const paid = project.installments.filter((item) => item.amountSatang === workspaceStore.paidAmount(item)).length;
+  const receivedTotal = received(project);
   const tabs = [["งาน", "today"], ["เงินงวด", "wallet"], ["เอกสาร", "file"]].map(([tab, symbol]) =>
     '<button type="button" class="detail-tab" data-detail="' + tab + '" aria-pressed="' + (tab === detailTab) + '">'
     + icon(symbol) + '<span>' + tab + '</span></button>'
@@ -296,8 +297,7 @@ function projectPage() {
   if (detailTab === "งาน") {
     body = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
   } else if (detailTab === "เงินงวด") {
-    body = '<div class="detail-body money-list">' + moneyRows(project)
-      + '<div class="money-received-total"><span>จำนวนเงินที่รับแล้วรวม</span><strong>' + money(received(project)) + '</strong></div></div>';
+    body = '<div class="detail-body money-list">' + moneyRows(project) + '</div>';
   } else {
     const docs = docsFor(project);
     const docRows = docs.map((doc, index) => {
@@ -320,9 +320,9 @@ function projectPage() {
     + '</strong></div></div></header>'
     + '<div class="detail-stage">' + tile("today") + '<div><span class="subtle">ขั้นตอนการทำงาน</span><strong>'
     + esc(stageName(project)) + '</strong></div><button class="text-button" data-change-stage>เปลี่ยนขั้นตอน</button></div>'
-    + '<div class="summary"><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>' + money(remainingAmount(project))
+    + '<div class="summary"><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>' + money(project.contractSatang - receivedTotal)
     + '</strong></div><div><span class="subtle">รับครบแล้ว</span><strong>' + paid + ' จาก ' + project.installments.length
-    + ' งวด</strong></div></div>'
+    + ' งวด</strong><p class="subtle received-note">(รับแล้ว ' + money(receivedTotal) + ')</p></div></div>'
     + '<section aria-label="รายละเอียดบ้าน"><div class="detail-tabs" role="group" aria-label="หมวดรายละเอียด">' + tabs
     + '</div><div class="panel detail-panel">' + toolbar + body + '</div></section></div>';
 }
@@ -1124,10 +1124,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 15) {
+    if (window.localData?.revision !== 16) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=15";
+        script.src = "./data.js?v=16";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
