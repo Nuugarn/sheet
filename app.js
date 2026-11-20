@@ -61,7 +61,7 @@ function initialTasks() {
   ];
 }
 let tasks = initialTasks();
-let view = "today";
+let view = "homes";
 let projectId = null;
 let detailTab = "งาน";
 let filter = "all";
@@ -70,7 +70,7 @@ let monthStart = today.slice(0, 7) + "-01";
 let toastTimer;
 
 const views = [
-  ["today", "งานวันนี้", "today"], ["homes", "บ้านทั้งหมด", "homes"], ["calendar", "ปฏิทิน", "calendar"]
+  ["homes", "บ้านทั้งหมด", "homes"], ["today", "งานวันนี้", "today"], ["calendar", "ปฏิทิน", "calendar"]
 ];
 const filterLabels = [["all", "ทั้งหมด"], ["open", "ยังไม่เสร็จ"], ["done", "เสร็จแล้ว"]];
 const projectFor = (id) => projects.find((project) => project.id === id);
@@ -139,9 +139,13 @@ function homesPage() {
   return '<header class="heading"><h1>บ้านทั้งหมด</h1><p>' + projects.length + ' บ้านลูกค้า</p></header><div class="project-grid">'
     + projects.map((project) => {
       const next = sorted(tasks.filter((task) => task.project === project.id && !task.done && task.date >= today))[0];
-      return '<button class="project" data-project="' + project.id + '">' + tile("homes") + '<h2>' + project.name
-        + '</h2><p class="subtle">' + project.place + ' · ' + project.stage + '</p><hr><span class="subtle">ยอดที่ยังต้องรับ</span><strong class="value">'
-        + money(project.contract - received(project)) + '</strong><p class="subtle">' + (next ? "งานถัดไป " + esc(next.title) + " · " + formatShortDate.format(atNoon(next.date)) : "ยังไม่มีงานถัดไป") + '</p></button>';
+      const nextTask = next ? esc(next.title) + " · " + formatShortDate.format(atNoon(next.date)) : "ยังไม่มีงานถัดไป";
+      return '<button class="project" data-project="' + project.id + '">'
+        + '<span class="project-head">' + tile("homes") + '<span class="project-heading"><strong class="project-name">' + esc(project.name)
+        + '</strong><span class="subtle">' + esc(project.place) + '</span></span></span>'
+        + '<span class="project-stage">' + esc(project.stage) + '</span>'
+        + '<span class="project-price"><span class="subtle">ราคารวม</span><strong class="value">' + money(project.contract) + '</strong></span>'
+        + '<span class="project-next">' + icon("calendar") + '<span>' + nextTask + '</span></span></button>';
     }).join("") + '</div>';
 }
 function moneyRows(project) {
@@ -195,6 +199,7 @@ function calendarPage() {
 function render(animate = true) {
   const pages = { today: todayPage, homes: homesPage, detail: projectPage, calendar: calendarPage };
   $("#content").innerHTML = '<div' + (animate ? ' class="page"' : "") + '>' + pages[view]() + '</div>';
+  $("#add").hidden = view !== "calendar";
   document.querySelectorAll(".nav-button").forEach((button) => {
     if (button.dataset.view === (view === "detail" ? "homes" : view)) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -215,11 +220,11 @@ function showDialog(title, body) {
   updateNetwork();
 }
 function showForm() {
-  if (!navigator.onLine) return;
-  const options = projects.map((project) => '<option value="' + project.id + '"' + (project.id === projectId ? " selected" : "") + '>' + project.name + '</option>').join("");
+  if (view !== "calendar" || !navigator.onLine) return;
+  const options = projects.map((project) => '<option value="' + project.id + '"' + '>' + project.name + '</option>').join("");
   showDialog("เพิ่มงาน", '<form id="add-form" class="form"><label>ชื่องาน<input name="title" required maxlength="120" autofocus placeholder="เช่น วัดหน้างานครัว"></label>'
-    + '<label>บ้านลูกค้า<select name="project" required><option value="" disabled' + (projectId ? "" : " selected") + '>เลือกบ้าน</option>' + options + '</select></label>'
-    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + (view === "calendar" ? calendarDate : today)
+    + '<label>บ้านลูกค้า<select name="project" required><option value="" disabled selected>เลือกบ้าน</option>' + options + '</select></label>'
+    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + calendarDate
     + '"></label><label>เวลา<input type="time" name="time"></label></div><label>โน้ต<input name="note" maxlength="500"></label>'
     + '<div class="dialog-actions"><button type="button" class="text-button" data-close>ยกเลิก</button><button type="submit" class="primary">บันทึกงาน</button></div></form>');
 }
@@ -237,7 +242,7 @@ function showDocument(index) {
     + (doc.note ? '<p>' + doc.note + '</p>' : "") + '<strong>ยอดเงิน ' + money(doc.amount) + '</strong></div>');
 }
 $("#logo").innerHTML = icon("brand");
-$("#logo").dataset.view = "today";
+$("#logo").dataset.view = "homes";
 $("#add").innerHTML = icon("plus");
 $("#nav").innerHTML = views.map(([viewName, title, symbol]) => '<button class="nav-button" data-view="' + viewName + '" aria-label="' + title
   + '" title="' + title + '">' + icon(symbol) + '</button>').join("");
@@ -314,21 +319,9 @@ document.addEventListener("submit", (event) => {
   };
   if (!saveTasks([...tasks, task])) return;
   $("#dialog").close();
-  if (view === "today") {
-    filter = "all";
-    if (task.date !== today) {
-      calendarDate = task.date;
-      monthStart = task.date.slice(0, 7) + "-01";
-      navigate("calendar");
-    }
-  }
-  if (view === "calendar") {
-    calendarDate = task.date;
-    monthStart = task.date.slice(0, 7) + "-01";
-  }
-  if (view === "detail") detailTab = "งาน";
-  if (view === "homes") navigate("detail", task.project);
-  else render(false);
+  calendarDate = task.date;
+  monthStart = task.date.slice(0, 7) + "-01";
+  render(false);
   showToast("บันทึกงานตัวอย่างแล้ว");
 });
 window.addEventListener("online", updateNetwork);

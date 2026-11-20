@@ -89,11 +89,32 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
 .heading { margin-bottom: 24px; }
 .heading p { margin-top: 8px; color: var(--muted); }
 .project-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
-.project { background: white; color: var(--ink); min-width: 0; width: 100%; cursor: pointer; text-align: left; border: 1px solid var(--line); border-radius: var(--radius); padding: 21px; transition: transform .2s, border-color .2s, box-shadow .2s; }
+.project {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 15px;
+  width: 100%;
+  min-width: 0;
+  padding: 19px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 3px 12px #183b700a;
+  transition: transform .2s, border-color .2s, box-shadow .2s;
+}
 .project:hover { transform: translateY(-3px); border-color: #b8d0f4; box-shadow: 0 8px 24px #183b7014; }
-.project h2 { font-size: 1.25rem; margin-top: 15px; }
-.project .value { display: block; font-size: 1.35rem; color: #134dba; margin-top: 3px; }
-.project hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.project-head { display: flex; align-items: center; gap: 12px; }
+.project-heading { min-width: 0; }
+.project-heading .subtle { display: block; }
+.project-name { display: block; font-size: 1.25rem; line-height: 1.35; overflow-wrap: anywhere; }
+.project-stage { align-self: flex-start; padding: 4px 10px; border-radius: 12px; color: #154b9e; background: #edf4ff; font-size: .875rem; font-weight: 650; overflow-wrap: anywhere; }
+.project-price { display: block; padding: 11px 12px; margin-top: auto; border-radius: 12px; background: #f5f8fd; }
+.project .value { display: block; font-size: 1.5rem; line-height: 1.35; color: #174ea6; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.project-next { display: flex; gap: 8px; align-items: flex-start; padding-top: 12px; border-top: 1px solid var(--line); font-size: .875rem; line-height: 1.55; color: var(--muted); overflow-wrap: anywhere; }
+.project-next .icon { width: 17px; height: 17px; margin-top: 2px; color: #2862b1; }
 .back { margin-bottom: 9px; padding-left: 0; }
 .summary { display: flex; flex-wrap: wrap; gap: 16px 32px; padding: 17px 21px; margin-bottom: 18px; background: var(--pale); border: 1px solid #d7e7ff; border-radius: 15px; }
 .summary strong { display: block; font-size: 1.24rem; }
@@ -110,7 +131,9 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
 .calendar-day { position: relative; display: grid; place-items: center; min-height: 45px; border: 1px solid transparent; color: var(--ink); background: none; border-radius: 10px; }
 .calendar-day:hover { background: #f0f5ff; }
 .calendar-day[aria-current="date"] { color: #154fb2; font-weight: 750; }
+.calendar-day[aria-current="date"]::before { content: ""; position: absolute; inset: 3px; border: 2px dashed #2864be; border-radius: 7px; pointer-events: none; }
 .calendar-day[aria-pressed="true"] { color: #124aaa; background: #e5efff; border-color: #c4d9fc; }
+.calendar-day[aria-current="date"].has-task::after { bottom: 8px; }
 .calendar-day.has-task::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #3a79de; position: absolute; bottom: 5px; }
 .month-buttons { display: flex; align-items: center; gap: 4px; }
 .icon-button { width: 39px; height: 39px; display: grid; place-items: center; border: 0; background: #edf3fe; border-radius: 10px; color: #194d9d; padding: 0; }
