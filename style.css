@@ -319,3 +319,6 @@ a.doc-row:focus-visible { outline: 3px solid #659cff; outline-offset: -3px; bord
   .money-amount .money-pay { margin-left: auto; }
   .detail-total { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; width: 100%; }
 }
+.detail-top-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.detail-top-actions button { min-height: 40px; }
+.detail-top-actions .back { margin-bottom: 0; }

@@ -260,7 +260,9 @@ function projectPage() {
     }).join("");
     body = '<div class="detail-body">' + (docRows || '<p class="empty">ยังไม่มีเอกสาร</p>') + '</div>';
   }
-  return '<div class="project-detail"><header class="detail-header"><button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
+  return '<div class="project-detail"><header class="detail-header"><div class="detail-top-actions">'
+    + '<button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
+    + '<button type="button" class="text-button danger" data-remove-house>ลบบ้าน</button></div>'
     + '<div class="detail-title"><div><h1>' + esc(project.name) + '</h1><p class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ข้อมูลตัวอย่าง" : "ข้อมูลตัวอย่าง") : "")
     + '</p></div><div class="detail-total"><span class="subtle">ราคารวมของงานนี้</span><strong>' + money(project.contractSatang)
     + '</strong></div></div></header>'
@@ -498,6 +500,19 @@ function removeItem(kind, id) {
     }), "ลบ" + label + "แล้ว", closeDialog)
   );
 }
+function removeHouse() {
+  const house = projectFor(projectId);
+  if (!house) return;
+  const linkedTasks = tasks.filter((task) => task.project === house.id).length;
+  confirmItemAction("ลบบ้าน?", "ลบ “" + esc(house.name) + "” พร้อม " + linkedTasks + " งาน "
+    + house.installments.length + " งวดและประวัติรับเงิน และ " + house.documents.length + " เอกสารที่แนบในแอปหรือไม่?",
+  "ยืนยันลบบ้าน", () => commit(() => workspaceStore.update((workspace) => {
+    const index = workspace.projects.findIndex((project) => project.id === house.id);
+    if (index < 0) throw new InputError("ไม่พบบ้านนี้แล้ว");
+    workspace.projects.splice(index, 1);
+    workspace.tasks = workspace.tasks.filter((task) => task.project !== house.id);
+  }), "ลบบ้านแล้ว", closeDialog));
+}
 function cancelPayment(itemId, paymentId) {
   const house = projectId;
   const item = projectFor(house)?.installments.find((entry) => entry.id === itemId);
@@ -576,6 +591,7 @@ document.addEventListener("click", (event) => {
   if (!ready) return;
   if (button.id === "add" || data.newProjectTask !== undefined) showForm();
   if (data.newHouse !== undefined) showHouseForm();
+  if (data.removeHouse !== undefined) removeHouse();
   if (data.changeStage !== undefined) showStageForm();
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
@@ -900,10 +916,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 10) {
+    if (window.localData?.revision !== 11) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=10";
+        script.src = "./data.js?v=11";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
