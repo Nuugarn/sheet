@@ -25,6 +25,7 @@ const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
 const $ = (selector) => document.querySelector(selector);
+$("#house-search").insertAdjacentHTML("beforebegin", icon("search"));
 const addButton = $("#add");
 const houseMenu = $("#house-menu");
 const backupPicker = $("#backup-file") || document.body.appendChild(Object.assign(document.createElement("input"), {
@@ -303,9 +304,7 @@ function homesPage() {
     + subtitle + '</div>' + actions + '</header>'
     + '<section class="summary homes-summary" aria-label="สรุปจำนวนเงินทุกบ้าน"><div><span class="subtle">จำนวนเงินรวมทุกบ้าน</span><strong>'
     + money(totals.contract) + '</strong></div><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>'
-    + money(totals.remaining) + '</strong></div></section><label class="house-search">' + icon("search")
-    + '<span class="visually-hidden">ค้นหาบ้าน</span><input type="search" id="house-search" placeholder="ค้นหาชื่อบ้านหรือสถานที่"'
-    + ' maxlength="180" autocomplete="off" enterkeyhint="search" value="' + esc(houseSearch) + '"></label>'
+    + money(totals.remaining) + '</strong></div></section>' 
     + '<p class="house-search-status' + (houses.length ? ' visually-hidden' : '') + '" id="house-search-status" role="status">'
     + houseSearchStatus(houses.length) + '</p><div class="project-grid" data-amount-mode="total">' + houseCards(houses) + '</div>';
 }
@@ -327,7 +326,7 @@ function moneyRows(project) {
             + '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
             + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button></span>')
         + '</li>').join("") + '</ul></details>' : "";
-    return '<div class="money-row' + (paid ? ' money-row-received' : '') + '"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
+    return '<div class="money-row' + (paid ? ' money-row-received' : '') + '"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + '</strong><p class="money-description">' + esc(item.label) + '</p>'
       + '<span class="payment-status' + tone + '">' + status + '</span>' + receipts
       + '</div><div class="money-amount"><div class="money-meta"><strong class="money-number">' + money(item.amountSatang)
       + '</strong><p class="subtle money-breakdown"><span>รับแล้ว ' + money(paid) + '</span>'
@@ -440,6 +439,7 @@ function render(animate = true) {
     }, 3000);
   }
   const isHomes = view === "homes";
+  $("#house-search").closest("label").hidden = !isHomes;
   const addLabel = isHomes ? "จัดการบ้าน" : "เพิ่มงาน";
   addButton.hidden = view !== "calendar" && !(isHomes && !selectingHouses);
   addButton.setAttribute("aria-label", addLabel);
@@ -1118,8 +1118,7 @@ const formHandlers = {
   "add-form": saveTask, "house-form": saveHouse, "stage-form": saveHouseStage,
   "installment-form": saveInstallment, "payment-form": savePayment, "doc-form": saveDoc, "pdf-form": savePdf
 };
-$("#content").addEventListener("input", (event) => {
-  if (event.target.id !== "house-search") return;
+$("#house-search").addEventListener("input", (event) => {
   houseSearch = event.target.value;
   const houses = matchingHouses();
   $("[data-amount-mode]").innerHTML = houseCards(houses);
@@ -1205,10 +1204,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 17) {
+    if (window.localData?.revision !== 18) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=17";
+        script.src = "./data.js?v=18";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);

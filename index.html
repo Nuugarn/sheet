@@ -8,9 +8,9 @@
   <title>Klao Built-in · คุมงาน</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" href="./icon-192.png">
-  <link rel="stylesheet" href="./style.css?v=17">
-  <script src="./data.js?v=17" defer></script>
-  <script src="./app.js?v=17" defer></script>
+  <link rel="stylesheet" href="./style.css?v=18">
+  <script src="./data.js?v=18" defer></script>
+  <script src="./app.js?v=18" defer></script>
 </head>
 <body>
   <aside class="rail" aria-label="เมนูหลัก">
@@ -20,6 +20,10 @@
   <div class="shell">
     <header class="topbar">
       <div class="brand"><span>Klao</span> Built-in</div>
+      <label class="house-search" hidden>
+        <span class="visually-hidden">ค้นหาบ้าน</span>
+        <input type="search" id="house-search" placeholder="ค้นหาบ้าน" maxlength="180" autocomplete="off" enterkeyhint="search">
+      </label>
       <div class="header-actions">
         <span class="top-status" id="connection">กำลังเปิดข้อมูล</span>
         <button class="text-button install-button" id="install" type="button" title="ติดตั้งแอป" aria-label="ติดตั้งแอป" hidden>
