@@ -7,6 +7,7 @@ const paths = {
   calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M7.5 3v5m9-5v5m-13 3h17M8 15h2m4 0h2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pencil: '<path d="m14 6 4 4M4 20l1-5L16 4a2.8 2.8 0 0 1 4 4L9 19z"/>',
+  swap: '<path d="M4 8h15m-4-4 4 4-4 4m5 4H5m4-4-4 4 4 4"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
@@ -50,6 +51,7 @@ let busy = false;
 let hasRecovery = false;
 let pendingRestore;
 let backupSelection = 0;
+let installmentContext;
 let paymentContext;
 let pendingItemAction;
 let openPdfUrl;
@@ -63,6 +65,7 @@ let projectId = null;
 let detailTab = "งาน";
 let selectingHouses = false;
 const selectedHouses = new Set();
+const housesShowingBalance = new Set();
 let filter = "all";
 let calendarDate = today;
 let monthStart = today.slice(0, 7) + "-01";
@@ -78,8 +81,17 @@ const sorted = (list) => [...list].sort(compareTasks);
 const sizeFormat = new Intl.NumberFormat("th-TH", { maximumFractionDigits: 1 });
 const fileSize = (bytes) => bytes >= 1000000 ? sizeFormat.format(bytes / 1000000) + " MB"
   : bytes >= 1000 ? sizeFormat.format(bytes / 1000) + " KB" : sizeFormat.format(bytes) + " B";
-const money = (amountSatang) => (amountSatang % 100 ? fractionalCurrency : currency).format(amountSatang / 100);
+function money(amountSatang) {
+  const amount = BigInt(amountSatang);
+  const baht = amount / 100n;
+  const satang = amount % 100n;
+  if (!satang) return currency.format(baht);
+  return fractionalCurrency.formatToParts(baht).map(({ type, value }) =>
+    type === "fraction" ? String(satang).padStart(2, "0") : value
+  ).join("");
+}
 const received = (project) => project.installments.reduce((total, item) => total + workspaceStore.paidAmount(item), 0);
+const remainingAmount = (project) => project.contractSatang - received(project);
 const stageName = (project) => project.stages[project.stageIndex];
 const projectIn = (data, id) => data.projects.find((project) => project.id === id);
 const submitActions = (label) => '<div class="dialog-actions"><button type="button" class="text-button" data-close>ยกเลิก</button>'
@@ -105,6 +117,9 @@ function setWorkspace(data) {
   tasks = data.tasks;
   for (const id of selectedHouses) {
     if (!projectFor(id)) selectedHouses.delete(id);
+  }
+  for (const id of housesShowingBalance) {
+    if (!projectFor(id)) housesShowingBalance.delete(id);
   }
   if (!projects.length) selectingHouses = false;
   if (view === "detail" && !projectFor(projectId)) goHome();
@@ -172,6 +187,30 @@ function todayPage() {
     + '<section class="panel"><div class="panel-head"><h2>บ้านลูกค้า</h2><button class="text-button" data-view="homes">ดูทั้งหมด</button></div>'
     + projects.map((project) => '<button class="site-preview" data-project="' + esc(project.id) + '">' + tile("homes") + '<span><strong>' + esc(project.name) + '</strong><span class="subtle">' + esc(stageName(project)) + '</span></span></button>').join("") + '</section></div>';
 }
+function houseAmountDetails(project) {
+  const showingBalance = housesShowingBalance.has(project.id);
+  const label = showingBalance ? "จำนวนเงินคงเหลือ" : "จำนวนเงินรวม";
+  const amount = money(showingBalance ? remainingAmount(project) : project.contractSatang);
+  const next = showingBalance ? "จำนวนเงินรวม" : "จำนวนเงินคงเหลือ";
+  return { label, amount, description: label + " " + amount + " ของ " + project.name + " กดเพื่อดู" + next };
+}
+function houseAmount(project) {
+  const { label, amount, description } = houseAmountDetails(project);
+  const content = '<span><span class="subtle">' + label + '</span><strong class="value">' + amount + '</strong></span>';
+  if (selectingHouses) return '<div class="project-amount">' + content + '</div>';
+  return '<button type="button" class="project-amount" data-house-amount="' + esc(project.id) + '" aria-label="'
+    + esc(description) + '">' + content + icon("swap") + '</button>';
+}
+function toggleHouseAmount(button) {
+  const project = projectFor(button.dataset.houseAmount);
+  if (!project) return;
+  if (housesShowingBalance.has(project.id)) housesShowingBalance.delete(project.id);
+  else housesShowingBalance.add(project.id);
+  const { label, amount, description } = houseAmountDetails(project);
+  button.querySelector(".subtle").textContent = label;
+  button.querySelector(".value").textContent = amount;
+  button.setAttribute("aria-label", description);
+}
 function homesPage() {
   const upcoming = sorted(tasks.filter((task) => !task.done && task.date >= today));
   const rankedProjects = projects.map((project) => ({
@@ -190,21 +229,30 @@ function homesPage() {
   const subtitle = selectingHouses
     ? '<p role="status" data-house-selection-count>' + houseSelectionLabel() + '</p>'
     : '<p>' + projects.length + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p>';
+  const totals = projects.reduce((sum, project) => {
+    sum.contract += BigInt(project.contractSatang);
+    sum.remaining += BigInt(remainingAmount(project));
+    return sum;
+  }, { contract: 0n, remaining: 0n });
   return '<header class="heading with-action' + (selectingHouses ? ' house-selection-toolbar' : '') + '"><div><h1>บ้านทั้งหมด</h1>'
-    + subtitle + '</div><div class="house-actions">' + actions + '</div></header><div class="project-grid">'
+    + subtitle + '</div><div class="house-actions">' + actions + '</div></header>'
+    + '<section class="summary homes-summary" aria-label="สรุปจำนวนเงินทุกบ้าน"><div><span class="subtle">จำนวนเงินรวมทุกบ้าน</span><strong>'
+    + money(totals.contract) + '</strong></div><div><span class="subtle">จำนวนเงินคงเหลือ</span><strong>'
+    + money(totals.remaining) + '</strong></div></section><div class="project-grid">'
     + rankedProjects.map(({ project, next }) => {
       const nextTask = next
         ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
           + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
         : '<span>ยังไม่มีนัดถัดไป</span>';
-      return '<button class="project" data-project="' + esc(project.id) + '"'
-        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '>'
+      return '<article class="project"><button type="button" class="project-open" data-project="' + esc(project.id)
+        + '" aria-label="' + esc(project.name) + '"'
+        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '></button>'
         + '<span class="project-head">' + tile("homes") + '<span class="project-heading"><strong class="project-name">' + esc(project.name)
         + '</strong><span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></span>'
         + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</span>'
         + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
-        + '<span class="project-price"><span class="subtle">ราคารวม</span><strong class="value">' + money(project.contractSatang) + '</strong></span>'
-        + '<span class="project-next">' + icon("calendar") + nextTask + '</span></button>';
+        + houseAmount(project)
+        + '<span class="project-next">' + icon("calendar") + nextTask + '</span></article>';
     }).join("") + '</div>' + (projects.length ? "" : '<p class="empty">ยังไม่มีบ้านลูกค้า</p>');
 }
 function moneyRows(project) {
@@ -220,15 +268,18 @@ function moneyRows(project) {
         + ' · ' + money(payment.amountSatang) + '</span>'
         + (payment.cancelledOn
           ? '<span class="receipt-cancelled">ยกเลิกแล้ว ' + formatShortDate.format(atNoon(payment.cancelledOn)) + '</span>'
-          : '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
-            + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button>')
+          : '<span class="receipt-actions"><button class="text-button" data-edit-payment="' + esc(payment.id) + '" data-installment="'
+            + esc(item.id) + '" aria-label="แก้ไขรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">แก้ไข</button>'
+            + '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
+            + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button></span>')
         + '</li>').join("") + '</ul></details>' : "";
     return '<div class="money-row"><div class="money-main"><strong class="money-name">งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
       + '<span class="payment-status' + tone + '">' + status + '</span>' + receipts
       + '</div><div class="money-amount"><div class="money-meta"><strong class="money-number">' + money(item.amountSatang)
       + '</strong><p class="subtle money-breakdown"><span>รับแล้ว ' + money(paid) + '</span>'
       + (paid && left ? '<span>เหลือ ' + money(left) + '</span>' : "") + '</p></div>'
-      + (left ? '<button class="outline-button small money-pay" data-payment="' + esc(item.id) + '">รับเงิน</button>' : "") + '</div></div>';
+      + '<div class="money-actions">' + (left ? '<button class="outline-button small money-pay" data-payment="' + esc(item.id) + '">รับเงิน</button>' : "")
+      + moreButton("installment", item.id, "จัดการงวด " + (index + 1) + " " + item.label) + '</div></div></div>';
   }).join("");
 }
 function docsFor(project) {
@@ -282,11 +333,11 @@ function projectPage() {
   return '<div class="project-detail"><header class="detail-header">'
     + '<button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
     + '<div class="detail-title"><div><h1>' + esc(project.name) + '</h1><p class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ข้อมูลตัวอย่าง" : "ข้อมูลตัวอย่าง") : "")
-    + '</p></div><div class="detail-total"><span class="subtle">ราคารวมของงานนี้</span><strong>' + money(project.contractSatang)
+    + '</p></div><div class="detail-total"><span class="subtle">จำนวนเงินรวมของบ้าน</span><strong>' + money(project.contractSatang)
     + '</strong></div></div></header>'
     + '<div class="detail-stage">' + tile("today") + '<div><span class="subtle">ขั้นตอนการทำงาน</span><strong>'
     + esc(stageName(project)) + '</strong></div><button class="text-button" data-change-stage>เปลี่ยนขั้นตอน</button></div>'
-    + '<div class="summary"><div><span class="subtle">ยอดเงินที่เหลือ</span><strong>' + money(project.contractSatang - received(project))
+    + '<div class="summary"><div><span class="subtle">จำนวนเงินคงเหลือ</span><strong>' + money(remainingAmount(project))
     + '</strong></div><div><span class="subtle">รับครบแล้ว</span><strong>' + paid + ' จาก ' + project.installments.length
     + ' งวด</strong></div></div>'
     + '<section aria-label="รายละเอียดบ้าน"><div class="detail-tabs" role="group" aria-label="หมวดรายละเอียด">' + tabs
@@ -403,12 +454,13 @@ function showTask(task) {
     + (project ? '<button class="primary" data-project="' + esc(project.id) + '">เปิดรายละเอียดบ้าน</button>' : "") + '</div>');
 }
 function showItemMenu(kind, id) {
-  const taskMenu = kind === "task";
-  const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(projectId)?.documents.find((doc) => doc.id === id);
+  const project = projectFor(projectId);
+  const item = kind === "task" ? tasks.find((task) => task.id === id)
+    : (kind === "installment" ? project?.installments : project?.documents)?.find((entry) => entry.id === id);
   if (!item) return;
-  const label = taskMenu ? "งาน" : item.pdf ? " PDF" : "ลิงก์เอกสาร";
+  const label = kind === "task" ? "งาน" : kind === "installment" ? "งวดเงิน" : item.pdf ? " PDF" : "ลิงก์เอกสาร";
   const ref = ' data-kind="' + kind + '" data-item="' + esc(id) + '"';
-  showDialog("จัดการ" + label, '<p class="item-title">' + esc(item.title) + '</p><div class="item-actions">'
+  showDialog("จัดการ" + label, '<p class="item-title">' + esc(item.title ?? item.label) + '</p><div class="item-actions">'
     + '<button type="button" class="outline-button" data-edit-item' + ref + '>แก้ไข' + label + '</button>'
     + '<button type="button" class="outline-button danger" data-remove-item' + ref + '>ลบ' + label + '</button></div>');
 }
@@ -435,7 +487,7 @@ function showHouseForm() {
   showDialog("เพิ่มบ้านลูกค้า", '<form id="house-form" class="form">'
     + '<label>ชื่อบ้านหรือชื่อลูกค้า<input name="name" maxlength="100" required autofocus></label>'
     + '<label>สถานที่<input name="place" maxlength="160"></label>'
-    + '<label>ราคารวม (บาท)<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>'
+    + '<label>จำนวนเงินรวม (บาท)<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>'
     + submitActions("เพิ่มบ้าน") + '</form>');
 }
 function showStageForm() {
@@ -443,32 +495,50 @@ function showStageForm() {
   showDialog("เปลี่ยนขั้นตอน", '<form id="stage-form" class="form"><label>ขั้นตอนปัจจุบัน<select name="stage">'
     + stageOptions(project, project.stageIndex) + '</select></label>' + submitActions("บันทึกขั้นตอน") + '</form>');
 }
-function showInstallmentForm() {
+const installmentCapacity = (project, exceptId) => project.installments.reduce((available, item) =>
+  item.id === exceptId ? available : available - item.amountSatang, project.contractSatang);
+const amountValue = (satang) => {
+  const value = String(satang).padStart(3, "0");
+  return value.slice(0, -2) + "." + value.slice(-2);
+};
+function showInstallmentForm(itemId) {
   const project = projectFor(projectId);
-  const available = project.contractSatang - project.installments.reduce((total, item) => total + item.amountSatang, 0);
+  const item = project?.installments.find((entry) => entry.id === itemId);
+  if (!project || (itemId && !item)) return;
+  const available = installmentCapacity(project, itemId);
   if (!available) {
-    showToast("แบ่งงวดครบตามราคารวมแล้ว");
+    showToast("แบ่งงวดครบตามจำนวนเงินรวมแล้ว");
     return;
   }
-  showDialog("เพิ่มงวดเงิน", '<p class="subtle">ยอดที่ยังแบ่งงวดได้ ' + money(available) + '</p><form id="installment-form" class="form">'
-    + '<label>ชื่องวด<input name="label" maxlength="100" required autofocus placeholder="เช่น มัดจำ"></label>'
-    + '<label>ยอดงวด (บาท)<input name="amount" type="number" min="0.01" max="' + available / 100
-    + '" step="0.01" inputmode="decimal" required></label>' + submitActions("เพิ่มงวดเงิน") + '</form>');
+  installmentContext = { projectId: project.id, item };
+  const paid = item ? workspaceStore.paidAmount(item) : 0;
+  const hint = item ? 'ยอดสูงสุด ' + money(available) + (paid ? ' · รับแล้ว ' + money(paid) : "") : 'ยอดที่ยังแบ่งงวดได้ ' + money(available);
+  showDialog(item ? "แก้ไขงวดเงิน" : "เพิ่มงวดเงิน", '<p class="subtle">' + hint + '</p><form id="installment-form" class="form">'
+    + '<label>ชื่องวด<input name="label" maxlength="100" required autofocus placeholder="เช่น มัดจำ" value="' + esc(item?.label) + '"></label>'
+    + '<label>จำนวนเงินงวด (บาท)<input name="amount" type="number" min="' + amountValue(Math.max(paid, 1))
+    + '" max="' + amountValue(available) + '" value="' + (item ? amountValue(item.amountSatang) : "")
+    + '" step="0.01" inputmode="decimal" required></label>' + submitActions(item ? "บันทึกการแก้ไข" : "เพิ่มงวดเงิน") + '</form>');
 }
-function showPaymentForm(id) {
+function showPaymentForm(id, paymentId) {
   const project = projectFor(projectId);
+  if (!project) return;
   const index = project.installments.findIndex((item) => item.id === id);
   const item = project.installments[index];
   if (!item) return;
+  const existing = item.payments.find((payment) => payment.id === paymentId && !payment.cancelledOn);
+  if (paymentId && !existing) return;
   const expectedPaid = workspaceStore.paidAmount(item);
   const left = item.amountSatang - expectedPaid;
-  if (!left) return;
-  paymentContext = { projectId: project.id, itemId: item.id, expectedPaid, left };
-  showDialog("รับเงินงวด " + (index + 1), '<p class="subtle">' + esc(item.label) + ' · ยังค้าง ' + money(left)
+  if (!left && !existing) return;
+  const limit = left + (existing?.amountSatang ?? 0);
+  paymentContext = { projectId: project.id, itemId: item.id, expectedPaid, limit, existing };
+  const date = existing ? existing.date ?? "" : dayKey.format(new Date());
+  showDialog(existing ? "แก้ไขรายการรับเงิน" : "รับเงินงวด " + (index + 1), '<p class="subtle">' + esc(item.label)
+    + (existing ? ' · แก้ได้สูงสุด ' + money(limit) : ' · ยังค้าง ' + money(left))
     + '</p><form id="payment-form" class="form"><label>ยอดรับจริง (บาท)<input name="amount" type="number" min="0.01" max="'
-    + left / 100 + '" value="' + left / 100 + '" step="0.01" inputmode="decimal" required></label>'
-    + '<label>วันที่รับเงิน<input name="date" type="date" required value="' + dayKey.format(new Date()) + '"></label>'
-    + submitActions("ยืนยันรับเงินครบ") + '</form>');
+    + amountValue(limit) + '" value="' + amountValue(existing?.amountSatang ?? limit) + '" step="0.01" inputmode="decimal" required></label>'
+    + '<label>วันที่รับเงิน<input name="date" type="date"' + (existing?.date === null ? "" : " required")
+    + ' value="' + date + '"></label>' + submitActions(existing ? "บันทึกการแก้ไข" : "ยืนยันรับเงินครบ") + '</form>');
 }
 function showPdfForm(doc = null) {
   showDialog(doc ? "แก้ไข PDF" : "เพิ่ม PDF", '<form id="pdf-form" class="form">'
@@ -494,7 +564,9 @@ function confirmItemAction(title, message, label, action) {
   pendingItemAction = action;
 }
 function editItem(kind, id) {
-  if (kind === "task") {
+  if (kind === "installment") {
+    showInstallmentForm(id);
+  } else if (kind === "task") {
     const task = tasks.find((entry) => entry.id === id);
     if (task) showForm(task);
   } else {
@@ -504,6 +576,10 @@ function editItem(kind, id) {
   }
 }
 function removeItem(kind, id) {
+  if (kind === "installment") {
+    removeInstallment(id);
+    return;
+  }
   const house = projectId;
   const taskMenu = kind === "task";
   const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(house)?.documents.find((doc) => doc.id === id);
@@ -521,6 +597,24 @@ function removeItem(kind, id) {
     }), "ลบ" + label + "แล้ว", closeDialog)
   );
 }
+function removeInstallment(id) {
+  const house = projectId;
+  const item = projectFor(house)?.installments.find((entry) => entry.id === id);
+  if (!item) return;
+  const snapshot = JSON.stringify(item);
+  const paid = workspaceStore.paidAmount(item);
+  const effect = item.payments.length ? '<p class="reset-description notes">ประวัติรับเงินของงวดนี้จะถูกลบด้วย'
+    + (paid ? ' และจำนวนเงินคงเหลือของบ้านจะเพิ่มขึ้น ' + money(paid) : "") + '</p>' : "";
+  showTimedConfirmation("ลบงวดเงิน?", '<p class="item-title">“' + esc(item.label) + '” · ' + money(item.amountSatang) + '</p>'
+    + effect, "ยืนยันลบงวด", () => commit(() => workspaceStore.update((workspace) => {
+      const installments = projectIn(workspace, house)?.installments;
+      const index = installments?.findIndex((entry) => entry.id === id) ?? -1;
+      if (index < 0 || JSON.stringify(installments[index]) !== snapshot) {
+        throw new InputError("งวดเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดใหม่");
+      }
+      installments.splice(index, 1);
+    }), "ลบงวดเงินแล้ว", closeDialog));
+}
 function houseSelectionLabel() {
   return selectedHouses.size ? "เลือกแล้ว " + selectedHouses.size + " หลัง" : "แตะการ์ดบ้านที่ต้องการลบ";
 }
@@ -528,7 +622,7 @@ function setHouseSelectionMode(active) {
   selectingHouses = active;
   selectedHouses.clear();
   render(false);
-  $(active ? ".project[data-project]" : "[data-select-houses]")?.focus({ preventScroll: active });
+  $(active ? ".project-open" : "[data-select-houses]")?.focus({ preventScroll: active });
 }
 function toggleHouseSelection(button) {
   const id = button.dataset.project;
@@ -569,7 +663,9 @@ function cancelPayment(itemId, paymentId) {
     const saved = await commit(() => workspaceStore.update((workspace) => {
       const project = projectIn(workspace, house);
       const stored = project?.installments.find((entry) => entry.id === itemId)?.payments.find((entry) => entry.id === paymentId);
-      if (!stored || stored.cancelledOn) throw new InputError("รายการนี้ถูกยกเลิกแล้ว");
+      if (!stored || stored.cancelledOn || stored.amountSatang !== payment.amountSatang || stored.date !== payment.date) {
+        throw new InputError("รายการรับเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดใหม่");
+      }
       stored.cancelledOn = dayKey.format(new Date());
     }), "ยกเลิกรายการรับเงินแล้ว", closeDialog);
     if (saved) $('[data-payment-history="' + CSS.escape(itemId) + '"]')?.setAttribute("open", "");
@@ -655,8 +751,10 @@ document.addEventListener("click", (event) => {
   if (data.finishHouseSelection !== undefined) setHouseSelectionMode(false);
   if (data.deleteSelectedHouses !== undefined) confirmHouseDeletion();
   if (data.changeStage !== undefined) showStageForm();
+  if (data.houseAmount) toggleHouseAmount(button);
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
+  if (data.editPayment) showPaymentForm(data.installment, data.editPayment);
   if (data.newDoc !== undefined) showDocForm();
   if (data.newPdf !== undefined) showPdfForm();
   if (data.itemMenu) showItemMenu(data.itemMenu, data.item);
@@ -790,7 +888,7 @@ function saveHouse(form) {
     stages: [...workspaceStore.stages], stageStart: 0, stageIndex: 0, installments: [], documents: []
   };
   if (!project.name || !workspaceStore.validMoney(project.contractSatang)) {
-    showToast("กรุณากรอกชื่อบ้านและราคารวม");
+    showToast("กรุณากรอกชื่อบ้านและจำนวนเงินรวม");
     return;
   }
   void commit(() => workspaceStore.update((workspace) => workspace.projects.push(project)), "เพิ่มบ้านแล้ว", () => {
@@ -812,7 +910,9 @@ function saveHouseStage(form) {
   }), "บันทึกขั้นตอนแล้ว", closeDialog);
 }
 function saveInstallment(form) {
-  const id = projectId;
+  const context = installmentContext;
+  if (!context) return;
+  const { projectId: id, item } = context;
   const label = form.get("label").trim();
   const amountSatang = workspaceStore.toSatang(form.get("amount"));
   if (!label || !workspaceStore.validMoney(amountSatang)) {
@@ -822,28 +922,51 @@ function saveInstallment(form) {
   void commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, id);
     if (!project) throw new InputError("ไม่พบบ้านนี้แล้ว");
-    const allotted = project.installments.reduce((total, item) => total + item.amountSatang, 0);
-    if (amountSatang > project.contractSatang - allotted) throw new InputError("ยอดงวดรวมเกินราคารวมของบ้าน");
-    project.installments.push({ id: workspaceStore.createId(), label, amountSatang, billed: false, payments: [] });
-  }), "เพิ่มงวดเงินแล้ว", closeDialog);
+    if (amountSatang > installmentCapacity(project, item?.id)) {
+      throw new InputError("ยอดงวดรวมเกินจำนวนเงินรวมของบ้าน");
+    }
+    if (item) {
+      const stored = project.installments.find((entry) => entry.id === item.id);
+      if (!stored || stored.label !== item.label || stored.amountSatang !== item.amountSatang) {
+        throw new InputError("งวดเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดใหม่");
+      }
+      if (amountSatang < workspaceStore.paidAmount(stored)) throw new InputError("จำนวนเงินงวดต่ำกว่ายอดที่รับแล้ว");
+      Object.assign(stored, { label, amountSatang });
+    } else {
+      project.installments.push({ id: workspaceStore.createId(), label, amountSatang, billed: false, payments: [] });
+    }
+  }), item ? "แก้ไขงวดเงินแล้ว" : "เพิ่มงวดเงินแล้ว", closeDialog);
 }
-function savePayment(form) {
+async function savePayment(form) {
   const context = paymentContext;
   if (!context) return;
-  const payment = { id: workspaceStore.createId(), amountSatang: workspaceStore.toSatang(form.get("amount")), date: form.get("date") };
-  if (!workspaceStore.validMoney(payment.amountSatang) || !workspaceStore.validDate(payment.date)) {
+  const { existing } = context;
+  const amountSatang = workspaceStore.toSatang(form.get("amount"));
+  const date = form.get("date") || null;
+  if (!workspaceStore.validMoney(amountSatang)
+    || !(workspaceStore.validDate(date) || (date === null && existing?.date === null))) {
     showToast("กรุณาตรวจยอดและวันที่รับเงิน");
     return;
   }
-  void commit(() => workspaceStore.update((workspace) => {
+  const saved = await commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, context.projectId);
     const item = project?.installments.find((entry) => entry.id === context.itemId);
     if (!item || workspaceStore.paidAmount(item) !== context.expectedPaid) {
       throw new InputError("ยอดเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดกรอกรับเงินใหม่");
     }
-    if (payment.amountSatang > item.amountSatang - context.expectedPaid) throw new InputError("ยอดรับสูงกว่ายอดค้าง");
-    item.payments.push(payment);
-  }), "บันทึกรับเงินแล้ว", closeDialog);
+    const othersPaid = context.expectedPaid - (existing?.amountSatang ?? 0);
+    if (amountSatang > item.amountSatang - othersPaid) throw new InputError("ยอดรับสูงกว่าจำนวนเงินงวด");
+    if (existing) {
+      const stored = item.payments.find((entry) => entry.id === existing.id);
+      if (!stored || stored.cancelledOn || stored.amountSatang !== existing.amountSatang || stored.date !== existing.date) {
+        throw new InputError("รายการรับเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดใหม่");
+      }
+      Object.assign(stored, { amountSatang, date });
+    } else {
+      item.payments.push({ id: workspaceStore.createId(), amountSatang, date });
+    }
+  }), existing ? "แก้ไขรายการรับเงินแล้ว" : "บันทึกรับเงินแล้ว", closeDialog);
+  if (saved && existing) $('[data-payment-history="' + CSS.escape(context.itemId) + '"]')?.setAttribute("open", "");
 }
 function saveDoc(form) {
   const id = projectId;
@@ -916,8 +1039,8 @@ $("#dialog").addEventListener("change", (event) => {
   if (calendarNote) calendarNote.hidden = Boolean(project);
 });
 $("#dialog").addEventListener("input", (event) => {
-  if (!event.target.matches("#payment-form input[name='amount']") || !paymentContext) return;
-  $("#payment-form [type=submit]").textContent = workspaceStore.toSatang(event.target.value) === paymentContext.left
+  if (!event.target.matches("#payment-form input[name='amount']") || !paymentContext || paymentContext.existing) return;
+  $("#payment-form [type=submit]").textContent = workspaceStore.toSatang(event.target.value) === paymentContext.limit
     ? "ยืนยันรับเงินครบ" : "บันทึกรับเงิน";
 });
 backupPicker.addEventListener("change", async (event) => {
@@ -978,10 +1101,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 12) {
+    if (window.localData?.revision !== 13) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=12";
+        script.src = "./data.js?v=13";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
