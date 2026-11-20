@@ -292,3 +292,11 @@ a.doc-row:focus-visible { outline: 3px solid #659cff; outline-offset: -3px; bord
 .receipt-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 9px; }
 .receipt-line button { min-height: 36px; padding-inline: 4px; }
 .receipt-cancelled { color: #a12e3b; }
+.detail-toolbar { margin-inline: 19px; }
+.reset-panel { max-width: 930px; margin-top: 16px; border-color: #e7c6cb; }
+.reset-description { line-height: 1.65; }
+.reset-actions { justify-content: space-between; }
+.reset-actions button { min-width: 88px; }
+@media (max-width: 510px) {
+  .detail-toolbar { margin-inline: 10px; }
+}

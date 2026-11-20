@@ -2,7 +2,7 @@
 
 window.localData = (() => {
   const appName = "klao-built-in";
-  const version = 2;
+  const version = 3;
   const currentKey = "current";
   const previousKey = "before-restore";
   const legacyKey = "klao-work-prototype-tasks-v1";
@@ -73,12 +73,14 @@ window.localData = (() => {
   }
 
   function validTask(task, project) {
-    return task && project && validId(task.id) && validText(task.title, 120, true)
+    return task && validId(task.id) && validText(task.title, 120, true)
       && validDate(task.date) && typeof task.done === "boolean"
       && (task.time === "" || (typeof task.time === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(task.time)))
       && validText(task.note, 500)
       && (task.completedOn == null || validDate(task.completedOn))
-      && (task.stage === null || validIndex(task.stage, project.stages.length));
+      && (task.project === null
+        ? task.stage === null
+        : project && project.id === task.project && (task.stage === null || validIndex(task.stage, project.stages.length)));
   }
 
   function validWorkspace(data) {
@@ -230,20 +232,36 @@ window.localData = (() => {
     });
   }
 
+  async function reset() {
+    const empty = { projects: [], tasks: [] };
+    const data = await transact("readwrite", (store, handle) => {
+      handle(store.clear(), () => {
+        store.put(empty, currentKey);
+        return empty;
+      });
+    });
+    try {
+      localStorage.removeItem(legacyKey);
+    } catch {
+      // The empty workspace is already committed.
+    }
+    return data;
+  }
+
   function exportBackup(data) {
     return JSON.stringify({ app: appName, version, exportedAt: new Date().toISOString(), data }, null, 2);
   }
 
   function parseBackup(text) {
     const backup = JSON.parse(text);
-    if (backup?.app !== appName || ![1, version].includes(backup.version) || !validWorkspace(backup.data)) {
+    if (backup?.app !== appName || ![1, 2, version].includes(backup.version) || !validWorkspace(backup.data)) {
       throw new Error("Invalid backup");
     }
     return backup.data;
   }
 
   return {
-    revision: 8, stages, createId, validDate, validLink, validMoney, validTask, toSatang,
-    advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, exportBackup, parseBackup
+    revision: 9, stages, createId, validDate, validLink, validMoney, validTask, toSatang,
+    advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, reset, exportBackup, parseBackup
   };
 })();

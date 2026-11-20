@@ -49,6 +49,8 @@ let hasRecovery = false;
 let pendingRestore;
 let paymentContext;
 let pendingItemAction;
+let resetTimer;
+let resetAvailableAt = Infinity;
 const workspaceChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("klao-workspace") : null;
 
 class InputError extends Error {}
@@ -84,7 +86,7 @@ function updateNetwork() {
 function updateControls() {
   $("#add").disabled = !ready || busy;
   document.querySelectorAll("#dialog [type=submit], #dialog [data-confirm], .done-check, [data-export]").forEach((button) => {
-    button.disabled = !ready || busy;
+    button.disabled = !ready || busy || (button.dataset.confirm === "reset" && performance.now() < resetAvailableAt);
   });
 }
 function setWorkspace(data) {
@@ -127,7 +129,7 @@ async function commit(operation, message, onSaved) {
 function taskRows(items, emptyText = "ยังไม่มีงาน") {
   if (items.length === 0) return '<li class="empty">' + emptyText + '</li>';
   return sorted(items).map((task) => {
-    const name = projectFor(task.project)?.name || "";
+    const name = projectFor(task.project)?.name ?? "งานในปฏิทิน";
     const subtitle = task.date === today ? name : name + " · " + formatShortDate.format(atNoon(task.date));
     return '<li class="task"><button class="done-check" aria-label="เสร็จแล้ว: ' + esc(task.title) + '" aria-pressed="' + task.done
       + '" data-toggle="' + esc(task.id) + '">' + icon(task.done ? "check" : "minus") + '</button>'
@@ -142,7 +144,7 @@ function pills(items, attribute, active) {
   return items.map(([value, label]) => '<button class="chip" data-' + attribute + '="' + value + '" aria-pressed="' + (value === active) + '">' + label + '</button>').join("");
 }
 function todayPage() {
-  const items = tasks.filter((task) => task.date === today);
+  const items = tasks.filter((task) => task.date === today && task.project !== null);
   const done = items.filter((task) => task.done).length;
   const open = items.length - done;
   const filtered = items.filter((task) => filter === "all" || (filter === "done" ? task.done : !task.done));
@@ -165,7 +167,7 @@ function homesPage() {
     return Number(!a.next) - Number(!b.next);
   });
   return '<header class="heading with-action"><div><h1>บ้านทั้งหมด</h1><p>' + projects.length
-    + ' บ้านลูกค้า · เรียงตามนัดถัดไป</p></div><button class="outline-button" data-new-house>' + icon("plus")
+    + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p></div><button class="outline-button" data-new-house>' + icon("plus")
     + '<span>เพิ่มบ้าน</span></button></header><div class="project-grid">' 
     + rankedProjects.map(({ project, next }) => {
       const nextTask = next
@@ -178,7 +180,7 @@ function homesPage() {
         + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
         + '<span class="project-price"><span class="subtle">ราคารวม</span><strong class="value">' + money(project.contractSatang) + '</strong></span>'
         + '<span class="project-next">' + icon("calendar") + nextTask + '</span></button>';
-    }).join("") + '</div>';
+    }).join("") + '</div>' + (projects.length ? "" : '<p class="empty">ยังไม่มีบ้านลูกค้า</p>');
 }
 function moneyRows(project) {
   if (!project.installments.length) return '<p class="empty">ยังไม่มีงวดเงิน</p>';
@@ -214,6 +216,11 @@ function docsFor(project) {
   return docs;
 }
 
+const projectActions = {
+  "งาน": ["new-project-task", "เพิ่มงาน"],
+  "เงินงวด": ["new-installment", "เพิ่มงวดเงิน"],
+  "เอกสาร": ["new-doc", "แนบลิงก์เอกสาร"]
+};
 function projectPage() {
   const project = projectFor(projectId);
   const paid = project.installments.filter((item) => item.amountSatang === workspaceStore.paidAmount(item)).length;
@@ -221,12 +228,14 @@ function projectPage() {
     '<button type="button" class="detail-tab" data-detail="' + tab + '" aria-pressed="' + (tab === detailTab) + '">'
     + icon(symbol) + '<span>' + tab + '</span></button>'
   ).join("");
+  const [action, label] = projectActions[detailTab];
+  const toolbar = '<div class="detail-actions detail-toolbar"><button type="button" class="outline-button" data-' + action
+    + '>' + icon("plus") + '<span>' + label + '</span></button></div>';
   let body;
   if (detailTab === "งาน") {
     body = '<ul class="task-list">' + taskRows(tasks.filter((task) => task.project === project.id)) + '</ul>';
   } else if (detailTab === "เงินงวด") {
-    body = '<div class="detail-body"><div class="detail-actions"><button class="outline-button" data-new-installment>'
-      + icon("plus") + '<span>เพิ่มงวดเงิน</span></button></div>' + moneyRows(project) + '</div>';
+    body = '<div class="detail-body">' + moneyRows(project) + '</div>';
   } else {
     const docs = docsFor(project);
     const docRows = docs.map((doc, index) => {
@@ -237,8 +246,7 @@ function projectPage() {
           + '</a>' + moreButton("doc", doc.id, "จัดการเอกสาร " + doc.title) + '</div>'
         : '<button class="doc-row" data-doc="' + index + '">' + label + '</button>';
     }).join("");
-    body = '<div class="detail-body"><div class="detail-actions"><button class="outline-button" data-new-doc>'
-      + icon("plus") + '<span>แนบลิงก์เอกสาร</span></button></div>' + (docRows || '<p class="empty">ยังไม่มีเอกสาร</p>') + '</div>';
+    body = '<div class="detail-body">' + (docRows || '<p class="empty">ยังไม่มีเอกสาร</p>') + '</div>';
   }
   return '<div class="project-detail"><header class="detail-header"><button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
     + '<div class="detail-title"><div><h1>' + esc(project.name) + '</h1><p class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ข้อมูลตัวอย่าง" : "ข้อมูลตัวอย่าง") : "")
@@ -250,7 +258,7 @@ function projectPage() {
     + '</strong></div><div><span class="subtle">รับครบแล้ว</span><strong>' + paid + ' จาก ' + project.installments.length
     + ' งวด</strong></div></div>'
     + '<section aria-label="รายละเอียดบ้าน"><div class="detail-tabs" role="group" aria-label="หมวดรายละเอียด">' + tabs
-    + '</div><div class="panel detail-panel">' + body + '</div></section></div>';
+    + '</div><div class="panel detail-panel">' + toolbar + body + '</div></section></div>';
 }
 function calendarPage() {
   const firstDay = atNoon(monthStart).getUTCDay();
@@ -279,7 +287,9 @@ function backupPage() {
     + '<section class="panel backup-panel"><h2>กู้คืนข้อมูล</h2><p class="subtle">เลือกไฟล์สำรองจากเครื่องหรือ Google Drive</p>'
     + '<button class="outline-button" data-import>เลือกไฟล์สำรอง</button>'
     + (hasRecovery ? '<button class="text-button" data-revert>กลับไปข้อมูลก่อนกู้คืน</button>' : "")
-    + '</section></div>';
+    + '</section></div><section class="panel backup-panel reset-panel"><h2>รีเซ็ตแอป</h2>'
+    + '<p class="subtle">ล้างข้อมูลทั้งหมดที่เก็บไว้ในแอปบนเครื่องนี้</p>'
+    + '<button type="button" class="primary danger-fill" data-reset-data>รีเซ็ตข้อมูลทั้งหมด</button></section>';
 }
 function render(animate = true) {
   const pages = { today: todayPage, homes: homesPage, detail: projectPage, calendar: calendarPage, backup: backupPage };
@@ -299,7 +309,12 @@ function navigate(name, id = null) {
   render();
   window.scrollTo(0, 0);
 }
+function clearResetTimer() {
+  clearInterval(resetTimer);
+  resetAvailableAt = Infinity;
+}
 function showDialog(title, body) {
+  clearResetTimer();
   const dialog = $("#dialog");
   dialog.innerHTML = '<div class="dialog-head"><h2 id="dialog-title">' + title + '</h2>' + closeControl + '</div>' + body;
   dialog.querySelector("form")?.setAttribute("method", "dialog");
@@ -313,20 +328,20 @@ function stageOptions(project, selected = null, includeNone = false) {
       + '>' + esc(stage) + '</option>').join("") : "");
 }
 function showForm(task = null) {
-  if (!ready || busy || (!task && view !== "calendar")) return;
-  if (!projects.length) {
-    showToast("เพิ่มบ้านลูกค้าก่อนนัดงาน");
-    return;
-  }
-  const project = task ? projectFor(task.project) : null;
-  const options = projects.map((item) => '<option value="' + esc(item.id) + '"' + (item.id === task?.project ? " selected" : "")
-    + '>' + esc(item.name) + '</option>').join("");
+  if (!ready || busy || (!task && view !== "calendar" && view !== "detail")) return;
+  const fromHouse = !task && view === "detail";
+  const project = projectFor(task ? task.project : fromHouse ? projectId : null);
+  const options = (fromHouse ? [project] : projects).map((item) => '<option value="' + esc(item.id) + '"'
+    + (item.id === project?.id ? " selected" : "") + '>' + esc(item.name) + '</option>').join("");
+  const noHouse = fromHouse ? "" : '<option value=""' + (project ? "" : " selected") + '>ไม่เลือกบ้าน</option>';
+  const date = task?.date || (fromHouse ? dayKey.format(new Date()) : calendarDate);
   showDialog(task ? "แก้ไขงาน" : "เพิ่มงาน", '<form id="add-form" class="form">'
     + (task ? '<input type="hidden" name="recordId" value="' + esc(task.id) + '">' : "")
     + '<label>ชื่องาน<input name="title" required maxlength="120" autofocus placeholder="เช่น วัดหน้างานครัว" value="' + esc(task?.title) + '"></label>'
-    + '<label>บ้านลูกค้า<select name="project" required><option value="" disabled' + (task ? "" : " selected")
-    + '>เลือกบ้าน</option>' + options + '</select></label>'
-    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + esc(task?.date || calendarDate)
+    + '<label>บ้านลูกค้า<select name="project"' + (fromHouse ? " required" : "") + '>' + noHouse + options + '</select></label>'
+    + (!fromHouse ? '<p class="subtle" id="calendar-only-note"' + (project ? " hidden" : "")
+      + '>งานที่ไม่เลือกบ้านจะแสดงเฉพาะในปฏิทิน</p>' : "")
+    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + esc(date)
     + '"></label><label>เวลา<input type="time" name="time" value="' + esc(task?.time)
     + '"></label></div><label>ขั้นตอนที่เกี่ยวข้อง<select name="stage"' + (project ? "" : " disabled") + '>'
     + stageOptions(project, task?.stage, true) + '</select></label><label>โน้ต<input name="note" maxlength="500" value="'
@@ -338,12 +353,12 @@ function moreButton(kind, id, label) {
 }
 function showTask(task) {
   const project = projectFor(task.project);
-  showDialog(esc(task.title), '<p class="subtle">' + esc(project.name) + ' · ' + formatDate.format(atNoon(task.date))
+  showDialog(esc(task.title), '<p class="subtle">' + esc(project?.name ?? 'งานในปฏิทิน') + ' · ' + formatDate.format(atNoon(task.date))
     + (task.time ? ' · ' + esc(task.time) + ' น.' : "") + '</p>'
     + (task.completedOn ? '<p class="subtle">เสร็จเมื่อ ' + formatShortDate.format(atNoon(task.completedOn)) + '</p>' : "")
     + (task.note ? '<p class="notes">' + esc(task.note) + '</p>' : "")
     + '<div class="dialog-actions">' + moreButton("task", task.id, "จัดการงาน")
-    + '<button class="primary" data-project="' + esc(project.id) + '">เปิดรายละเอียดบ้าน</button></div>');
+    + (project ? '<button class="primary" data-project="' + esc(project.id) + '">เปิดรายละเอียดบ้าน</button>' : "") + '</div>');
 }
 function showItemMenu(kind, id) {
   const taskMenu = kind === "task";
@@ -473,9 +488,31 @@ async function downloadBackup() {
     showToast("ดาวน์โหลดไฟล์สำรองไม่ได้");
   }
 }
+function showResetDialog() {
+  showDialog("รีเซ็ตข้อมูลทั้งหมด?", '<p class="reset-description">การรีเซ็ตจะลบบ้าน งาน นัด งวดเงิน ประวัติรับเงิน และลิงก์เอกสารทั้งหมดในเครื่องนี้ รวมถึงข้อมูลก่อนกู้คืนที่แอปเก็บไว้</p>'
+    + '<p class="subtle notes">หากต้องการนำข้อมูลกลับมา ให้ส่งออกไฟล์สำรองก่อนรีเซ็ต</p>'
+    + '<div class="dialog-actions reset-actions"><button type="button" class="primary danger-fill" data-confirm="reset" disabled>รีเซ็ต (5)</button>'
+    + '<button type="button" class="outline-button" data-close data-reset-cancel>ยกเลิก</button></div>');
+  resetAvailableAt = performance.now() + 5000;
+  const button = $('[data-confirm="reset"]');
+  const tick = () => {
+    const remaining = Math.max(0, Math.ceil((resetAvailableAt - performance.now()) / 1000));
+    const label = remaining ? "รีเซ็ต (" + remaining + ")" : "รีเซ็ต";
+    if (button.textContent !== label) button.textContent = label;
+    button.disabled = !ready || busy || remaining > 0;
+    if (!remaining) clearInterval(resetTimer);
+  };
+  resetTimer = setInterval(tick, 100);
+  $('[data-reset-cancel]').focus({ preventScroll: true });
+}
+
 function closeDialog() {
+  clearResetTimer();
   $("#dialog").close();
 }
+$("#dialog").addEventListener("close", () => {
+  if (!$("#dialog").open) clearResetTimer();
+});
 $("#logo").innerHTML = icon("brand");
 $("#logo").dataset.view = "homes";
 $("#add").innerHTML = icon("plus");
@@ -487,7 +524,7 @@ document.addEventListener("click", (event) => {
   const data = button.dataset;
   if (data.close !== undefined) closeDialog();
   if (!ready) return;
-  if (button.id === "add") showForm();
+  if (button.id === "add" || data.newProjectTask !== undefined) showForm();
   if (data.newHouse !== undefined) showHouseForm();
   if (data.changeStage !== undefined) showStageForm();
   if (data.newInstallment !== undefined) showInstallmentForm();
@@ -499,6 +536,14 @@ document.addEventListener("click", (event) => {
   if (data.cancelPayment) cancelPayment(data.installment, data.cancelPayment);
   if (data.confirm === "item" && pendingItemAction) void pendingItemAction();
   if (data.export !== undefined) void downloadBackup();
+  if (data.resetData !== undefined) showResetDialog();
+  if (data.confirm === "reset" && performance.now() >= resetAvailableAt) {
+    void commit(workspaceStore.reset, "รีเซ็ตข้อมูลแล้ว", () => {
+      hasRecovery = false;
+      pendingRestore = undefined;
+      closeDialog();
+    });
+  }
   if (data.import !== undefined) {
     backupPicker.value = "";
     backupPicker.click();
@@ -581,7 +626,7 @@ function saveTask(form) {
   const existingId = form.get("recordId");
   const stage = form.get("stage");
   const changes = {
-    id: existingId || workspaceStore.createId(), title: form.get("title").trim(), project: form.get("project"),
+    id: existingId || workspaceStore.createId(), title: form.get("title").trim(), project: form.get("project") || null,
     date: form.get("date"), time: form.get("time"), note: form.get("note").trim(),
     stage: stage ? Number(stage) : null
   };
@@ -708,6 +753,8 @@ $("#dialog").addEventListener("change", (event) => {
   const picker = $("#add-form select[name='stage']");
   picker.innerHTML = stageOptions(project, null, true);
   picker.disabled = !project;
+  const calendarNote = $("#calendar-only-note");
+  if (calendarNote) calendarNote.hidden = Boolean(project);
 });
 $("#dialog").addEventListener("input", (event) => {
   if (!event.target.matches("#payment-form input[name='amount']") || !paymentContext) return;
@@ -769,10 +816,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 8) {
+    if (window.localData?.revision !== 9) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=8";
+        script.src = "./data.js?v=9";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
