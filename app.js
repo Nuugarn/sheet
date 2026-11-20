@@ -11,6 +11,7 @@ const paths = {
   minus: '<path d="M8 12h8"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
+  download: '<path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/>',
   left: '<path d="m15 6-6 6 6 6"/>',
   right: '<path d="m9 6 6 6-6 6"/>'
 };
@@ -332,7 +333,32 @@ document.addEventListener("submit", (event) => {
 });
 window.addEventListener("online", updateNetwork);
 window.addEventListener("offline", updateNetwork);
+const installButton = $("#install");
+let installEvent = null;
+
+installButton?.insertAdjacentHTML("afterbegin", icon("download"));
+window.addEventListener("beforeinstallprompt", (event) => {
+  if (!installButton) return;
+  event.preventDefault();
+  installEvent = event;
+  installButton.hidden = false;
+});
+installButton?.addEventListener("click", async () => {
+  const prompt = installEvent;
+  if (!prompt) return;
+  installEvent = null;
+  installButton.hidden = true;
+  try {
+    await prompt.prompt();
+  } catch {
+    showToast("ติดตั้งได้ผ่านเมนูของ Chrome");
+  }
+});
+window.addEventListener("appinstalled", () => {
+  installEvent = null;
+  if (installButton) installButton.hidden = true;
+});
 render();
 if ("serviceWorker" in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register("./sw.js").catch((error) => console.info("Offline setup:", error.name));
+  navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch((error) => console.info("Offline setup:", error.name));
 }

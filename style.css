@@ -31,6 +31,9 @@ h1, h2, h3, p { margin: 0; }
 .nav-button[aria-current="page"]::before { content: ""; position: absolute; left: -12px; width: 3px; height: 24px; background: #b5d6ff; border-radius: 0 4px 4px 0; }
 .shell { margin-left: var(--rail); }
 .topbar { height: 75px; display: flex; gap: 16px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding-inline: clamp(20px, 4vw, 54px); }
+.header-actions { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.install-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 39px; }
+.install-button .icon { width: 19px; height: 19px; }
 .brand { font-size: 1.18rem; font-weight: 700; letter-spacing: -.03em; white-space: nowrap; }
 .brand span { color: #1756bb; }
 .top-status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: .875rem; font-weight: 650; white-space: nowrap; }
@@ -159,7 +162,10 @@ dialog::backdrop { background: #0e234966; }
   .nav-button[aria-current="page"]::before { left: -5px; }
   .topbar { padding-inline: 12px; gap: 8px; }
   .brand { font-size: 1.05rem; }
-  .top-status { font-size: .75rem; }
+  .header-actions { gap: 4px; }
+  .install-button { min-width: 34px; }
+  .install-button span { display: none; }
+  .top-status { font-size: .75rem; white-space: normal; }
   #content { padding-inline: 12px; padding-top: 15px; }
   .hero { min-height: 151px; padding: 18px 13px; margin-bottom: 13px; }
   .blueprint { opacity: .4; }

@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#123b87">
   <meta name="description" content="ต้นแบบเว็บคุมงานสำหรับ Klao Built-in">
   <title>Klao Built-in · คุมงาน</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" href="./icon-192.png">
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" defer></script>
 </head>
@@ -17,7 +19,12 @@
   <div class="shell">
     <header class="topbar">
       <div class="brand"><span>Klao</span> Built-in</div>
-      <span class="top-status" id="connection">ข้อมูลตัวอย่าง</span>
+      <div class="header-actions">
+        <span class="top-status" id="connection">ข้อมูลตัวอย่าง</span>
+        <button class="text-button install-button" id="install" type="button" title="ติดตั้งแอป" aria-label="ติดตั้งแอป" hidden>
+          <span>ติดตั้งแอป</span>
+        </button>
+      </div>
     </header>
     <main id="content"></main>
   </div>

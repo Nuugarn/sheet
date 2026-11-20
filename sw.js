@@ -1,20 +1,59 @@
 const prefix = "klao-work-preview-";
-const cacheName = prefix + "1";
-const files = ["./", "./index.html", "./style.css", "./app.js"];
+const cacheName = prefix + "2";
+const scope = self.registration.scope;
+const home = new URL("./", scope);
+const index = new URL("./index.html", scope);
+const assets = [
+  "style.css",
+  "app.js",
+  "manifest.webmanifest",
+  "icon-192.png",
+  "icon-512.png"
+].map((file) => new URL(file, scope).href);
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(files)).then(() => self.skipWaiting()));
+  const requests = [home.href, ...assets].map((url) => new Request(url, { cache: "reload" }));
+  event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(requests)));
 });
+
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((names) => Promise.all(names
-    .filter((name) => name.startsWith(prefix) && name !== cacheName)
-    .map((name) => caches.delete(name)))).then(() => self.clients.claim()));
+  event.waitUntil(caches.keys()
+    .then((names) => Promise.all(names
+      .filter((name) => name.startsWith(prefix) && name !== cacheName)
+      .map((name) => caches.delete(name))))
+    .then(() => self.clients.claim()));
 });
+
+async function fetchWithOfflineCopy(url, request) {
+  let response;
+  try {
+    response = await fetch(request);
+  } catch (error) {
+    const stored = await caches.match(url, { cacheName });
+    if (stored) return stored;
+    throw error;
+  }
+
+  if (response.ok && !response.redirected) {
+    try {
+      const cache = await caches.open(cacheName);
+      await cache.put(url, response.clone());
+    } catch (error) {
+      console.info("Could not update offline copy:", error.name);
+    }
+  }
+  return response;
+}
+
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  const assets = files.map((file) => new URL(file, self.registration.scope).href);
-  if (event.request.mode === "navigate" && assets.slice(0, 2).includes(event.request.url)) {
-    event.respondWith(fetch(event.request).catch(() => caches.match("./index.html", { cacheName })));
-  } else if (assets.includes(event.request.url)) {
-    event.respondWith(caches.match(event.request, { cacheName }).then((cached) => cached || fetch(event.request)));
+  const request = event.request;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  if (request.mode === "navigate" && url.origin === home.origin
+      && (url.pathname === home.pathname || url.pathname === index.pathname)) {
+    event.respondWith(fetchWithOfflineCopy(home.href, request));
+  } else if (assets.includes(url.href)) {
+    event.respondWith(fetchWithOfflineCopy(url.href, request));
   }
 });
