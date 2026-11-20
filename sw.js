@@ -1,5 +1,5 @@
 const prefix = "klao-work-preview-";
-const revision = "6";
+const revision = "7";
 const cacheName = prefix + revision;
 const scope = self.registration.scope;
 const home = new URL("./", scope);
@@ -31,7 +31,7 @@ self.addEventListener("activate", (event) => {
 async function fetchWithOfflineCopy(url, request) {
   let response;
   try {
-    response = await fetch(request);
+    response = await fetch(request, { cache: "no-cache" });
   } catch (error) {
     const stored = await caches.match(url, { cacheName });
     if (stored) return stored;

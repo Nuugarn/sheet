@@ -22,6 +22,9 @@ const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
 const $ = (selector) => document.querySelector(selector);
+const backupPicker = $("#backup-file") || document.body.appendChild(Object.assign(document.createElement("input"), {
+  id: "backup-file", type: "file", accept: ".json,application/json", hidden: true
+}));
 const currency = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 });
 const fractionalCurrency = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
 const formatDate = new Intl.DateTimeFormat("th-TH", { dateStyle: "full", timeZone: "Asia/Bangkok" });
@@ -407,9 +410,8 @@ document.addEventListener("click", (event) => {
   if (data.newDoc !== undefined) showDocForm();
   if (data.export !== undefined) void downloadBackup();
   if (data.import !== undefined) {
-    const picker = $("#backup-file");
-    picker.value = "";
-    picker.click();
+    backupPicker.value = "";
+    backupPicker.click();
   }
   if (data.revert !== undefined) showDialog("ย้อนการกู้คืน",
     '<p>ข้อมูลจะกลับไปเป็นชุดก่อนกู้คืนครั้งล่าสุด</p><div class="dialog-actions">'
@@ -601,7 +603,7 @@ $("#dialog").addEventListener("input", (event) => {
   $("#payment-form [type=submit]").textContent = localData.toSatang(event.target.value) === paymentContext.left
     ? "ยืนยันรับเงินครบ" : "บันทึกรับเงิน";
 });
-$("#backup-file").addEventListener("change", async (event) => {
+backupPicker.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file || busy || !ready) return;
   try {
@@ -656,6 +658,15 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
+    if (typeof localData === "undefined") {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "./data.js?v=7";
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.append(script);
+      });
+    }
     const data = await localData.load(today, offsetDay(today, 3));
     hasRecovery = await localData.hasPrevious();
     setWorkspace(data);
