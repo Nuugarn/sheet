@@ -7,6 +7,7 @@ const paths = {
   calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M7.5 3v5m9-5v5m-13 3h17M8 15h2m4 0h2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pencil: '<path d="m14 6 4 4M4 20l1-5L16 4a2.8 2.8 0 0 1 4 4L9 19z"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
@@ -67,6 +68,7 @@ let detailTab = "งาน";
 let selectingHouses = false;
 const selectedHouses = new Set();
 let houseAmountTimer;
+let houseSearch = "";
 let filter = "all";
 let calendarDate = today;
 let monthStart = today.slice(0, 7) + "-01";
@@ -196,22 +198,102 @@ function houseAmount(project) {
     + total + '</strong></span><span class="project-figure amount-balance" aria-hidden="true">'
     + '<span class="subtle">จำนวนเงินคงเหลือ</span><strong class="value">' + balance + '</strong></span></div>';
 }
-function homesPage() {
-  const upcoming = sorted(tasks.filter((task) => !task.done && task.date >= today));
-  const rankedProjects = projects.map((project) => ({
+const searchWords = (value) => value.normalize("NFKC").toLowerCase().split(/[\s\p{P}\p{S}]+/u).filter(Boolean);
+const withoutThaiTones = (value) => value.replace(/[่้๊๋]/g, "");
+
+function substringEditDistance(term, field, limit) {
+  const query = [...term];
+  const text = [...field];
+  if (query.length - text.length > limit) return Infinity;
+  // A zero-cost starting row allows the match to begin anywhere in the field.
+  let previous = new Uint16Array(text.length + 1);
+  let earlier = new Uint16Array(text.length + 1);
+  let row = new Uint16Array(text.length + 1);
+  for (let i = 1; i <= query.length; i++) {
+    row[0] = i;
+    for (let j = 1; j <= text.length; j++) {
+      const substitution = query[i - 1] === text[j - 1] ? 0 : 1;
+      row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + substitution);
+      if (i > 1 && j > 1 && query[i - 1] === text[j - 2] && query[i - 2] === text[j - 1]) {
+        row[j] = Math.min(row[j], earlier[j - 2] + 1);
+      }
+    }
+    [earlier, previous, row] = [previous, row, earlier];
+  }
+  const distance = Math.min(...previous);
+  return distance <= limit ? distance : Infinity;
+}
+function houseSearchScore(project, terms) {
+  if (!terms.length) return { matched: 0, score: 0 };
+  const fields = [project.name, project.place].map((value) => searchWords(value).join(" "));
+  const foldedFields = fields.map(withoutThaiTones);
+  let matched = 0;
+  let score = 0;
+  for (const term of terms) {
+    const folded = withoutThaiTones(term);
+    const length = [...folded].length;
+    const limit = length >= 8 ? 2 : length >= 5 ? 1 : 0;
+    let strength = 0;
+    if (fields.some((field) => field === term)) strength = 6;
+    else if (fields.some((field) => field.includes(term))) strength = 5;
+    else if (length >= 3 && foldedFields.some((field) => field.includes(folded))) strength = 4;
+    else if (limit) {
+      const distance = Math.min(...foldedFields.map((field) => substringEditDistance(folded, field, limit)));
+      if (distance !== Infinity) strength = 3 - distance;
+    }
+    if (strength) {
+      matched++;
+      score += strength;
+    }
+  }
+  return { matched, score };
+}
+function matchingHouses() {
+  const terms = [...new Set(searchWords(houseSearch))];
+  const upcoming = new Map();
+  for (const task of sorted(tasks.filter((task) => task.project && !task.done && task.date >= today))) {
+    if (!upcoming.has(task.project)) upcoming.set(task.project, task);
+  }
+  return projects.map((project) => ({
     project,
-    next: upcoming.find((task) => task.project === project.id)
-  })).sort((a, b) => {
+    next: upcoming.get(project.id),
+    ...houseSearchScore(project, terms)
+  })).filter((entry) => !terms.length || entry.matched).sort((a, b) => {
+    const relevance = b.matched - a.matched || b.score - a.score;
+    if (relevance) return relevance;
     if (a.next && b.next) return compareTasks(a.next, b.next);
     return Number(!a.next) - Number(!b.next);
   });
+}
+function houseCards(houses) {
+  return houses.map(({ project, next }) => {
+    const nextTask = next
+      ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
+        + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
+      : '<span>ยังไม่มีนัดถัดไป</span>';
+    return '<article class="project"><div class="project-head">' + tile("homes")
+      + '<div class="project-heading"><button type="button" class="project-open project-name" data-project="' + esc(project.id) + '"'
+      + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '>' + esc(project.name) + '</button>'
+      + '<span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></div>'
+      + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</div>'
+      + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
+      + houseAmount(project)
+      + '<span class="project-next">' + icon("calendar") + nextTask + '</span></article>';
+  }).join("");
+}
+function houseSearchStatus(count) {
+  if (count) return houseSearch.trim() ? "พบ " + count + " บ้าน" : "";
+  return projects.length ? "ไม่พบบ้านที่ตรงกับคำค้น" : "ยังไม่มีบ้านลูกค้า";
+}
+function homesPage() {
+  const houses = matchingHouses();
   const actions = selectingHouses
     ? '<div class="house-actions"><button class="outline-button" data-finish-house-selection>เสร็จสิ้น</button>'
       + '<button class="primary danger-fill" data-delete-selected-houses>ลบที่เลือก</button></div>'
     : "";
   const subtitle = selectingHouses
     ? '<p role="status" data-house-selection-count>' + houseSelectionLabel() + '</p>'
-    : '<p>' + projects.length + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p>';
+    : '<p>' + projects.length + ' บ้านลูกค้า</p>';
   const totals = projects.reduce((sum, project) => {
     sum.contract += BigInt(project.contractSatang);
     sum.remaining += BigInt(remainingAmount(project));
@@ -221,21 +303,11 @@ function homesPage() {
     + subtitle + '</div>' + actions + '</header>'
     + '<section class="summary homes-summary" aria-label="สรุปจำนวนเงินทุกบ้าน"><div><span class="subtle">จำนวนเงินรวมทุกบ้าน</span><strong>'
     + money(totals.contract) + '</strong></div><div class="balance-summary"><span class="subtle">จำนวนเงินคงเหลือ</span><strong>'
-    + money(totals.remaining) + '</strong></div></section><div class="project-grid" data-amount-mode="total">'
-    + rankedProjects.map(({ project, next }) => {
-      const nextTask = next
-        ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
-          + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
-        : '<span>ยังไม่มีนัดถัดไป</span>';
-      return '<article class="project"><div class="project-head">' + tile("homes")
-        + '<div class="project-heading"><button type="button" class="project-open project-name" data-project="' + esc(project.id) + '"'
-        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '>' + esc(project.name) + '</button>'
-        + '<span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></div>'
-        + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</div>'
-        + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
-        + houseAmount(project)
-        + '<span class="project-next">' + icon("calendar") + nextTask + '</span></article>';
-    }).join("") + '</div>' + (projects.length ? "" : '<p class="empty">ยังไม่มีบ้านลูกค้า</p>');
+    + money(totals.remaining) + '</strong></div></section><label class="house-search">' + icon("search")
+    + '<span class="visually-hidden">ค้นหาบ้าน</span><input type="search" id="house-search" placeholder="ค้นหาชื่อบ้านหรือสถานที่"'
+    + ' maxlength="180" autocomplete="off" enterkeyhint="search" value="' + esc(houseSearch) + '"></label>'
+    + '<p class="house-search-status' + (houses.length ? ' visually-hidden' : '') + '" id="house-search-status" role="status">'
+    + houseSearchStatus(houses.length) + '</p><div class="project-grid" data-amount-mode="total">' + houseCards(houses) + '</div>';
 }
 function moneyRows(project) {
   if (!project.installments.length) return '<p class="empty">ยังไม่มีงวดเงิน</p>';
@@ -362,7 +434,7 @@ function render(animate = true) {
   $("#content").innerHTML = '<div' + (animate ? ' class="page"' : "") + '>' + pages[view]() + '</div>';
   clearInterval(houseAmountTimer);
   const grid = $("[data-amount-mode]");
-  if (grid?.childElementCount) {
+  if (grid && projects.length) {
     houseAmountTimer = setInterval(() => {
       grid.dataset.amountMode = grid.dataset.amountMode === "total" ? "balance" : "total";
     }, 3000);
@@ -1046,6 +1118,15 @@ const formHandlers = {
   "add-form": saveTask, "house-form": saveHouse, "stage-form": saveHouseStage,
   "installment-form": saveInstallment, "payment-form": savePayment, "doc-form": saveDoc, "pdf-form": savePdf
 };
+$("#content").addEventListener("input", (event) => {
+  if (event.target.id !== "house-search") return;
+  houseSearch = event.target.value;
+  const houses = matchingHouses();
+  $("[data-amount-mode]").innerHTML = houseCards(houses);
+  const status = $("#house-search-status");
+  status.textContent = houseSearchStatus(houses.length);
+  status.classList.toggle("visually-hidden", houses.length > 0);
+});
 document.addEventListener("submit", (event) => {
   if (!event.target.closest("#dialog")) return;
   event.preventDefault();
@@ -1124,10 +1205,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 16) {
+    if (window.localData?.revision !== 17) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=16";
+        script.src = "./data.js?v=17";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);

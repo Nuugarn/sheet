@@ -105,6 +105,17 @@ h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.22; letter-spacing: -.035
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+.house-search {
+  display: flex; align-items: center; gap: 10px; width: min(100%, 34rem);
+  padding-inline: 13px; margin-bottom: 16px; border: 1px solid #cbd9eb;
+  border-radius: 12px; background: #f8faff; color: #3b638f;
+}
+.house-search:focus-within { border-color: var(--blue); outline: 2px solid #a3c4ff; outline-offset: 1px; }
+.house-search .icon { width: 19px; height: 19px; }
+.house-search input { flex: 1; min-width: 0; min-height: 45px; padding: 8px 0; border: 0; outline: none; background: transparent; color: var(--ink); }
+.house-search input:focus-visible { outline: none; }
+.house-search input::placeholder { color: var(--muted); opacity: 1; }
+.house-search-status { color: var(--muted); padding: 8px 0; }
 .project-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
 .project {
   position: relative;
