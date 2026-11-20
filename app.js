@@ -6,6 +6,7 @@ const paths = {
   homes: '<path d="M3 10.5 12 3l9 7.5M5 9v11h14V9m-9 11v-6h4v6"/>',
   calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M7.5 3v5m9-5v5m-13 3h17M8 15h2m4 0h2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  pencil: '<path d="m14 6 4 4M4 20l1-5L16 4a2.8 2.8 0 0 1 4 4L9 19z"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
@@ -52,14 +53,16 @@ let backupSelection = 0;
 let paymentContext;
 let pendingItemAction;
 let openPdfUrl;
-let resetTimer;
-let resetAvailableAt = Infinity;
+let confirmationTimer;
+let confirmationAvailableAt = Infinity;
 const workspaceChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("klao-workspace") : null;
 
 class InputError extends Error {}
 let view = "homes";
 let projectId = null;
 let detailTab = "งาน";
+let selectingHouses = false;
+const selectedHouses = new Set();
 let filter = "all";
 let calendarDate = today;
 let monthStart = today.slice(0, 7) + "-01";
@@ -92,12 +95,18 @@ function updateNetwork() {
 function updateControls() {
   $("#add").disabled = !ready || busy;
   document.querySelectorAll("#dialog [type=submit], #dialog [data-confirm], .done-check, [data-export]").forEach((button) => {
-    button.disabled = !ready || busy || (button.dataset.confirm === "reset" && performance.now() < resetAvailableAt);
+    button.disabled = !ready || busy || (button.dataset.confirm === "timed" && performance.now() < confirmationAvailableAt);
   });
+  const remove = $("[data-delete-selected-houses]");
+  if (remove) remove.disabled = !ready || busy || !selectedHouses.size;
 }
 function setWorkspace(data) {
   projects = data.projects;
   tasks = data.tasks;
+  for (const id of selectedHouses) {
+    if (!projectFor(id)) selectedHouses.delete(id);
+  }
+  if (!projects.length) selectingHouses = false;
   if (view === "detail" && !projectFor(projectId)) goHome();
 }
 function goHome() {
@@ -172,17 +181,27 @@ function homesPage() {
     if (a.next && b.next) return compareTasks(a.next, b.next);
     return Number(!a.next) - Number(!b.next);
   });
-  return '<header class="heading with-action"><div><h1>บ้านทั้งหมด</h1><p>' + projects.length
-    + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p></div><button class="outline-button" data-new-house>' + icon("plus")
-    + '<span>เพิ่มบ้าน</span></button></header><div class="project-grid">' 
+  const actions = selectingHouses
+    ? '<button class="outline-button" data-finish-house-selection>เสร็จสิ้น</button>'
+      + '<button class="primary danger-fill" data-delete-selected-houses>ลบที่เลือก</button>'
+    : (projects.length ? '<button class="outline-button house-edit" data-select-houses aria-label="เลือกบ้านที่จะลบ" title="เลือกบ้านที่จะลบ">'
+      + icon("pencil") + '</button>' : '')
+      + '<button class="outline-button" data-new-house>' + icon("plus") + '<span>เพิ่มบ้าน</span></button>';
+  const subtitle = selectingHouses
+    ? '<p role="status" data-house-selection-count>' + houseSelectionLabel() + '</p>'
+    : '<p>' + projects.length + ' บ้านลูกค้า' + (projects.length ? ' · เรียงตามนัดถัดไป' : '') + '</p>';
+  return '<header class="heading with-action' + (selectingHouses ? ' house-selection-toolbar' : '') + '"><div><h1>บ้านทั้งหมด</h1>'
+    + subtitle + '</div><div class="house-actions">' + actions + '</div></header><div class="project-grid">'
     + rankedProjects.map(({ project, next }) => {
       const nextTask = next
         ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
           + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
         : '<span>ยังไม่มีนัดถัดไป</span>';
-      return '<button class="project" data-project="' + esc(project.id) + '">'
+      return '<button class="project" data-project="' + esc(project.id) + '"'
+        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '>'
         + '<span class="project-head">' + tile("homes") + '<span class="project-heading"><strong class="project-name">' + esc(project.name)
-        + '</strong><span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></span></span>'
+        + '</strong><span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></span>'
+        + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</span>'
         + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
         + '<span class="project-price"><span class="subtle">ราคารวม</span><strong class="value">' + money(project.contractSatang) + '</strong></span>'
         + '<span class="project-next">' + icon("calendar") + nextTask + '</span></button>';
@@ -260,9 +279,8 @@ function projectPage() {
     }).join("");
     body = '<div class="detail-body">' + (docRows || '<p class="empty">ยังไม่มีเอกสาร</p>') + '</div>';
   }
-  return '<div class="project-detail"><header class="detail-header"><div class="detail-top-actions">'
+  return '<div class="project-detail"><header class="detail-header">'
     + '<button class="text-button back" data-view="homes">กลับไปบ้านทั้งหมด</button>'
-    + '<button type="button" class="text-button danger" data-remove-house>ลบบ้าน</button></div>'
     + '<div class="detail-title"><div><h1>' + esc(project.name) + '</h1><p class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ข้อมูลตัวอย่าง" : "ข้อมูลตัวอย่าง") : "")
     + '</p></div><div class="detail-total"><span class="subtle">ราคารวมของงานนี้</span><strong>' + money(project.contractSatang)
     + '</strong></div></div></header>'
@@ -317,15 +335,17 @@ function render(animate = true) {
   updateControls();
 }
 function navigate(name, id = null) {
+  selectingHouses = false;
+  selectedHouses.clear();
   view = name;
   projectId = id;
   detailTab = "งาน";
   render();
   window.scrollTo(0, 0);
 }
-function clearResetTimer() {
-  clearInterval(resetTimer);
-  resetAvailableAt = Infinity;
+function clearConfirmationTimer() {
+  clearInterval(confirmationTimer);
+  confirmationAvailableAt = Infinity;
 }
 function releasePdfUrl() {
   if (!openPdfUrl) return;
@@ -334,7 +354,8 @@ function releasePdfUrl() {
   setTimeout(() => URL.revokeObjectURL(previousUrl), 1000);
 }
 function showDialog(title, body) {
-  clearResetTimer();
+  pendingItemAction = undefined;
+  clearConfirmationTimer();
   releasePdfUrl();
   const dialog = $("#dialog");
   dialog.innerHTML = '<div class="dialog-head"><h2 id="dialog-title">' + title + '</h2>' + closeControl + '</div>' + body;
@@ -467,10 +488,10 @@ function showDocForm(doc = null) {
     + esc(doc?.url) + '"></label>' + submitActions(doc ? "บันทึกการแก้ไข" : "บันทึกลิงก์") + '</form>');
 }
 function confirmItemAction(title, message, label, action) {
-  pendingItemAction = action;
   showDialog(title, '<p>' + message + '</p><div class="dialog-actions">'
     + '<button type="button" class="text-button" data-close>กลับ</button>'
     + '<button type="button" class="primary danger-fill" data-confirm="item">' + label + '</button></div>');
+  pendingItemAction = action;
 }
 function editItem(kind, id) {
   if (kind === "task") {
@@ -500,18 +521,43 @@ function removeItem(kind, id) {
     }), "ลบ" + label + "แล้ว", closeDialog)
   );
 }
-function removeHouse() {
-  const house = projectFor(projectId);
-  if (!house) return;
-  const linkedTasks = tasks.filter((task) => task.project === house.id).length;
-  confirmItemAction("ลบบ้าน?", "ลบ “" + esc(house.name) + "” พร้อม " + linkedTasks + " งาน "
-    + house.installments.length + " งวดและประวัติรับเงิน และ " + house.documents.length + " เอกสารที่แนบในแอปหรือไม่?",
-  "ยืนยันลบบ้าน", () => commit(() => workspaceStore.update((workspace) => {
-    const index = workspace.projects.findIndex((project) => project.id === house.id);
-    if (index < 0) throw new InputError("ไม่พบบ้านนี้แล้ว");
-    workspace.projects.splice(index, 1);
-    workspace.tasks = workspace.tasks.filter((task) => task.project !== house.id);
-  }), "ลบบ้านแล้ว", closeDialog));
+function houseSelectionLabel() {
+  return selectedHouses.size ? "เลือกแล้ว " + selectedHouses.size + " หลัง" : "แตะการ์ดบ้านที่ต้องการลบ";
+}
+function setHouseSelectionMode(active) {
+  selectingHouses = active;
+  selectedHouses.clear();
+  render(false);
+  $(active ? ".project[data-project]" : "[data-select-houses]")?.focus({ preventScroll: active });
+}
+function toggleHouseSelection(button) {
+  const id = button.dataset.project;
+  const selected = !selectedHouses.has(id);
+  if (selected) selectedHouses.add(id);
+  else selectedHouses.delete(id);
+  button.setAttribute("aria-pressed", selected);
+  $("[data-house-selection-count]").textContent = houseSelectionLabel();
+  updateControls();
+}
+function confirmHouseDeletion() {
+  const houses = projects.filter((project) => selectedHouses.has(project.id));
+  if (!houses.length) return;
+  const ids = new Set(houses.map((house) => house.id));
+  const names = houses.map((house) => "<li>" + esc(house.name) + "</li>").join("");
+  showTimedConfirmation("ลบบ้าน " + houses.length + " หลัง?", '<ul class="house-delete-list">' + names + '</ul>'
+    + '<p class="reset-description">งานและนัดของบ้านที่เลือก รวมถึงงวดเงิน ประวัติรับเงิน และเอกสารแนบ จะถูกลบจากเครื่องนี้ด้วย</p>',
+  "ยืนยันลบ", async () => {
+    const saved = await commit(() => workspaceStore.update((workspace) => {
+      if (!workspace.projects.some((house) => ids.has(house.id))) throw new InputError("บ้านที่เลือกถูกลบแล้ว");
+      workspace.projects = workspace.projects.filter((house) => !ids.has(house.id));
+      workspace.tasks = workspace.tasks.filter((task) => !ids.has(task.project));
+    }), "ลบบ้านที่เลือกแล้ว", () => {
+      selectingHouses = false;
+      selectedHouses.clear();
+      closeDialog();
+    });
+    if (saved) ($("[data-select-houses]") || $("[data-new-house]"))?.focus();
+  });
 }
 function cancelPayment(itemId, paymentId) {
   const house = projectId;
@@ -550,31 +596,45 @@ async function downloadBackup() {
     updateControls();
   }
 }
-function showResetDialog() {
-  showDialog("รีเซ็ตข้อมูลทั้งหมด?", '<p class="reset-description">การรีเซ็ตจะลบบ้าน งาน นัด งวดเงิน ประวัติรับเงิน ไฟล์ PDF และลิงก์เอกสารทั้งหมดในเครื่องนี้ รวมถึงข้อมูลก่อนกู้คืนที่แอปเก็บไว้</p>'
-    + '<p class="subtle notes">หากต้องการนำข้อมูลกลับมา ให้ส่งออกไฟล์สำรองก่อนรีเซ็ต</p>'
-    + '<div class="dialog-actions reset-actions"><button type="button" class="primary danger-fill" data-confirm="reset" disabled>รีเซ็ต (5)</button>'
-    + '<button type="button" class="outline-button" data-close data-reset-cancel>ยกเลิก</button></div>');
-  resetAvailableAt = performance.now() + 5000;
-  const button = $('[data-confirm="reset"]');
+function showTimedConfirmation(title, body, label, action) {
+  const seconds = 5;
+  showDialog(title, body
+    + '<div class="dialog-actions reset-actions"><button type="button" class="primary danger-fill" data-confirm="timed" disabled>'
+    + label + ' (' + seconds + ')</button><button type="button" class="outline-button" data-close>ยกเลิก</button></div>');
+  pendingItemAction = action;
+  confirmationAvailableAt = performance.now() + seconds * 1000;
+  const button = $('[data-confirm="timed"]');
   const tick = () => {
-    const remaining = Math.max(0, Math.ceil((resetAvailableAt - performance.now()) / 1000));
-    const label = remaining ? "รีเซ็ต (" + remaining + ")" : "รีเซ็ต";
-    if (button.textContent !== label) button.textContent = label;
-    button.disabled = !ready || busy || remaining > 0;
-    if (!remaining) clearInterval(resetTimer);
+    const remaining = Math.max(0, Math.ceil((confirmationAvailableAt - performance.now()) / 1000));
+    const caption = remaining ? label + " (" + remaining + ")" : label;
+    if (button.textContent !== caption) button.textContent = caption;
+    if (!remaining) {
+      clearInterval(confirmationTimer);
+      updateControls();
+    }
   };
-  resetTimer = setInterval(tick, 100);
-  $('[data-reset-cancel]').focus({ preventScroll: true });
+  confirmationTimer = setInterval(tick, 100);
+  $(".reset-actions [data-close]").focus({ preventScroll: true });
+}
+function showResetDialog() {
+  showTimedConfirmation("รีเซ็ตข้อมูลทั้งหมด?", '<p class="reset-description">การรีเซ็ตจะลบบ้าน งาน นัด งวดเงิน ประวัติรับเงิน ไฟล์ PDF และลิงก์เอกสารทั้งหมดในเครื่องนี้ รวมถึงข้อมูลก่อนกู้คืนที่แอปเก็บไว้</p>'
+    + '<p class="subtle notes">หากต้องการนำข้อมูลกลับมา ให้ส่งออกไฟล์สำรองก่อนรีเซ็ต</p>', "รีเซ็ต", () =>
+    commit(workspaceStore.reset, "รีเซ็ตข้อมูลแล้ว", () => {
+      hasRecovery = false;
+      pendingRestore = undefined;
+      closeDialog();
+    })
+  );
 }
 
 function closeDialog() {
-  clearResetTimer();
+  clearConfirmationTimer();
   $("#dialog").close();
 }
 $("#dialog").addEventListener("close", () => {
   if (!$("#dialog").open) {
-    clearResetTimer();
+    pendingItemAction = undefined;
+    clearConfirmationTimer();
     releasePdfUrl();
   }
 });
@@ -591,7 +651,9 @@ document.addEventListener("click", (event) => {
   if (!ready) return;
   if (button.id === "add" || data.newProjectTask !== undefined) showForm();
   if (data.newHouse !== undefined) showHouseForm();
-  if (data.removeHouse !== undefined) removeHouse();
+  if (data.selectHouses !== undefined) setHouseSelectionMode(true);
+  if (data.finishHouseSelection !== undefined) setHouseSelectionMode(false);
+  if (data.deleteSelectedHouses !== undefined) confirmHouseDeletion();
   if (data.changeStage !== undefined) showStageForm();
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
@@ -601,16 +663,13 @@ document.addEventListener("click", (event) => {
   if (data.editItem !== undefined) editItem(data.kind, data.item);
   if (data.removeItem !== undefined) removeItem(data.kind, data.item);
   if (data.cancelPayment) cancelPayment(data.installment, data.cancelPayment);
-  if (data.confirm === "item" && pendingItemAction) void pendingItemAction();
+  if (data.confirm === "item" || data.confirm === "timed") {
+    const dialog = $("#dialog");
+    if (dialog.open && dialog.contains(button) && !button.disabled
+      && (data.confirm === "item" || performance.now() >= confirmationAvailableAt)) void pendingItemAction?.();
+  }
   if (data.export !== undefined) void downloadBackup();
   if (data.resetData !== undefined) showResetDialog();
-  if (data.confirm === "reset" && performance.now() >= resetAvailableAt) {
-    void commit(workspaceStore.reset, "รีเซ็ตข้อมูลแล้ว", () => {
-      hasRecovery = false;
-      pendingRestore = undefined;
-      closeDialog();
-    });
-  }
   if (data.import !== undefined) {
     backupPicker.value = "";
     backupPicker.click();
@@ -629,8 +688,11 @@ document.addEventListener("click", (event) => {
   if (data.confirm === "revert") void commit(workspaceStore.revert, "ย้อนการกู้คืนแล้ว", closeDialog);
   if (data.view) navigate(data.view);
   if (data.project) {
-    if ($("#dialog").open) $("#dialog").close();
-    navigate("detail", data.project);
+    if (view === "homes" && selectingHouses) toggleHouseSelection(button);
+    else {
+      if ($("#dialog").open) closeDialog();
+      navigate("detail", data.project);
+    }
   }
   if (data.filter) {
     filter = data.filter;
@@ -916,10 +978,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 11) {
+    if (window.localData?.revision !== 12) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=11";
+        script.src = "./data.js?v=12";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
