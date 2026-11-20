@@ -244,12 +244,11 @@ function homesPage() {
         ? '<span><strong>' + esc(next.title) + '</strong><span>' + formatShortDate.format(atNoon(next.date))
           + (next.time ? " · " + esc(next.time) + " น." : "") + '</span></span>'
         : '<span>ยังไม่มีนัดถัดไป</span>';
-      return '<article class="project"><button type="button" class="project-open" data-project="' + esc(project.id)
-        + '" aria-label="' + esc(project.name) + '"'
-        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '></button>'
-        + '<span class="project-head">' + tile("homes") + '<span class="project-heading"><strong class="project-name">' + esc(project.name)
-        + '</strong><span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></span>'
-        + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</span>'
+      return '<article class="project"><div class="project-head">' + tile("homes")
+        + '<div class="project-heading"><button type="button" class="project-open project-name" data-project="' + esc(project.id) + '"'
+        + (selectingHouses ? ' aria-pressed="' + selectedHouses.has(project.id) + '"' : '') + '>' + esc(project.name) + '</button>'
+        + '<span class="subtle">' + esc(project.place) + (project.sample ? (project.place ? " · ตัวอย่าง" : "ตัวอย่าง") : "") + '</span></div>'
+        + (selectingHouses ? '<span class="project-select-mark" aria-hidden="true">' + icon("check") + '</span>' : '') + '</div>'
         + '<span class="project-stage">' + esc(stageName(project)) + '</span>'
         + houseAmount(project)
         + '<span class="project-next">' + icon("calendar") + nextTask + '</span></article>';
@@ -1101,10 +1100,10 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (window.localData?.revision !== 13) {
+    if (window.localData?.revision !== 14) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=13";
+        script.src = "./data.js?v=14";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
