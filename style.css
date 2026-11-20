@@ -281,3 +281,14 @@ a.doc-row:focus-visible { outline: 3px solid #659cff; outline-offset: -3px; bord
 @media (max-width: 650px) {
   .backup-grid { grid-template-columns: 1fr; }
 }
+.item-more { flex: none; width: 44px; height: 44px; }
+.item-title { overflow-wrap: anywhere; }
+.item-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.danger { color: #a12e3b; }
+.danger-fill { background: #a12e3b; }
+.danger-fill:hover { background: #842130; }
+.doc-entry { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); min-width: 0; }
+.doc-entry .doc-row { border: 0; flex: 1; min-width: 0; }
+.receipt-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 9px; }
+.receipt-line button { min-height: 36px; padding-inline: 4px; }
+.receipt-cancelled { color: #a12e3b; }

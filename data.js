@@ -1,8 +1,8 @@
 "use strict";
 
-const localData = (() => {
+window.localData = (() => {
   const appName = "klao-built-in";
-  const version = 1;
+  const version = 2;
   const currentKey = "current";
   const previousKey = "before-restore";
   const legacyKey = "klao-work-prototype-tasks-v1";
@@ -18,7 +18,8 @@ const localData = (() => {
   const validMoney = (value) => Number.isSafeInteger(value) && value > 0;
   const uniqueIds = (items) => new Set(items.map((item) => item.id)).size === items.length;
   const sum = (items, field) => items.reduce((total, item) => total + item[field], 0);
-  const paidAmount = (installment) => sum(installment.payments, "amountSatang");
+  const paidAmount = (installment) => installment.payments.reduce((total, payment) =>
+    total + (payment.cancelledOn ? 0 : payment.amountSatang), 0);
 
   function validDate(value) {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -66,7 +67,8 @@ const localData = (() => {
       && validMoney(item.amountSatang) && typeof item.billed === "boolean"
       && Array.isArray(item.payments) && item.payments.every((payment) =>
         payment && validId(payment.id) && validMoney(payment.amountSatang)
-        && (payment.date === null || validDate(payment.date)))
+        && (payment.date === null || validDate(payment.date))
+        && (payment.cancelledOn == null || validDate(payment.cancelledOn)))
       && uniqueIds(item.payments) && paidAmount(item) <= item.amountSatang;
   }
 
@@ -234,14 +236,14 @@ const localData = (() => {
 
   function parseBackup(text) {
     const backup = JSON.parse(text);
-    if (backup?.app !== appName || backup.version !== version || !validWorkspace(backup.data)) {
+    if (backup?.app !== appName || ![1, version].includes(backup.version) || !validWorkspace(backup.data)) {
       throw new Error("Invalid backup");
     }
     return backup.data;
   }
 
   return {
-    stages, createId, validDate, validLink, validMoney, validTask, toSatang,
+    revision: 8, stages, createId, validDate, validLink, validMoney, validTask, toSatang,
     advanceStage, paidAmount, load, read, update, hasPrevious, restore, revert, exportBackup, parseBackup
   };
 })();

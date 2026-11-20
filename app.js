@@ -10,6 +10,7 @@ const paths = {
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/>',
   minus: '<path d="M8 12h8"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  more: '<path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3.6"/>',
   storage: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   wallet: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M21 10h-5a2 2 0 0 0 0 4h5m-4-2h.01"/>',
   file: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',
@@ -39,6 +40,7 @@ function offsetDay(date, days) {
   return dayKey.format(instant);
 }
 
+let workspaceStore;
 let projects = [];
 let tasks = [];
 let ready = false;
@@ -46,6 +48,7 @@ let busy = false;
 let hasRecovery = false;
 let pendingRestore;
 let paymentContext;
+let pendingItemAction;
 const workspaceChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("klao-workspace") : null;
 
 class InputError extends Error {}
@@ -65,7 +68,7 @@ const projectFor = (id) => projects.find((project) => project.id === id);
 const compareTasks = (a, b) => a.date.localeCompare(b.date) || (a.time || "99").localeCompare(b.time || "99");
 const sorted = (list) => [...list].sort(compareTasks);
 const money = (amountSatang) => (amountSatang % 100 ? fractionalCurrency : currency).format(amountSatang / 100);
-const received = (project) => project.installments.reduce((total, item) => total + localData.paidAmount(item), 0);
+const received = (project) => project.installments.reduce((total, item) => total + workspaceStore.paidAmount(item), 0);
 const stageName = (project) => project.stages[project.stageIndex];
 const projectIn = (data, id) => data.projects.find((project) => project.id === id);
 const submitActions = (label) => '<div class="dialog-actions"><button type="button" class="text-button" data-close>ยกเลิก</button>'
@@ -180,13 +183,19 @@ function homesPage() {
 function moneyRows(project) {
   if (!project.installments.length) return '<p class="empty">ยังไม่มีงวดเงิน</p>';
   return project.installments.map((item, index) => {
-    const paid = localData.paidAmount(item);
+    const paid = workspaceStore.paidAmount(item);
     const left = item.amountSatang - paid;
     const status = !left ? "รับครบแล้ว" : paid ? "รับบางส่วน" : item.billed ? "วางบิลแล้ว" : "รอรับเงิน";
     const tone = !left ? " paid" : paid ? " partial" : "";
-    const receipts = item.payments.length ? '<details class="payment-history"><summary>ประวัติรับเงิน</summary><ul>'
-      + item.payments.map((payment) => '<li>' + (payment.date ? formatShortDate.format(atNoon(payment.date)) : "ยอดเดิม")
-        + ' · ' + money(payment.amountSatang) + '</li>').join("") + '</ul></details>' : "";
+    const receipts = item.payments.length ? '<details class="payment-history" data-payment-history="' + esc(item.id)
+      + '"><summary>ประวัติรับเงิน</summary><ul>'
+      + item.payments.map((payment) => '<li class="receipt-line"><span>' + (payment.date ? formatShortDate.format(atNoon(payment.date)) : "ยอดเดิม")
+        + ' · ' + money(payment.amountSatang) + '</span>'
+        + (payment.cancelledOn
+          ? '<span class="receipt-cancelled">ยกเลิกแล้ว ' + formatShortDate.format(atNoon(payment.cancelledOn)) + '</span>'
+          : '<button class="text-button danger" data-cancel-payment="' + esc(payment.id) + '" data-installment="'
+            + esc(item.id) + '" aria-label="ยกเลิกรายการรับเงิน ' + esc(money(payment.amountSatang)) + '">ยกเลิกรายการ</button>')
+        + '</li>').join("") + '</ul></details>' : "";
     return '<div class="money-row"><div><strong>งวด ' + (index + 1) + ' · ' + esc(item.label) + '</strong>'
       + '<span class="payment-status' + tone + '">' + status + '</span>' + receipts
       + '</div><div class="money-amount"><strong>' + money(item.amountSatang)
@@ -207,7 +216,7 @@ function docsFor(project) {
 
 function projectPage() {
   const project = projectFor(projectId);
-  const paid = project.installments.filter((item) => item.amountSatang === localData.paidAmount(item)).length;
+  const paid = project.installments.filter((item) => item.amountSatang === workspaceStore.paidAmount(item)).length;
   const tabs = [["งาน", "today"], ["เงินงวด", "wallet"], ["เอกสาร", "file"]].map(([tab, symbol]) =>
     '<button type="button" class="detail-tab" data-detail="' + tab + '" aria-pressed="' + (tab === detailTab) + '">'
     + icon(symbol) + '<span>' + tab + '</span></button>'
@@ -224,7 +233,8 @@ function projectPage() {
       const label = tile("file") + '<span><strong>' + esc(doc.title)
         + '</strong><small class="subtle">' + (doc.url ? "เปิดลิงก์เอกสาร" : "เอกสารตัวอย่าง") + '</small></span>';
       return doc.url
-        ? '<a class="doc-row" target="_blank" rel="noopener noreferrer" href="' + esc(doc.url) + '">' + label + '</a>'
+        ? '<div class="doc-entry"><a class="doc-row" target="_blank" rel="noopener noreferrer" href="' + esc(doc.url) + '">' + label
+          + '</a>' + moreButton("doc", doc.id, "จัดการเอกสาร " + doc.title) + '</div>'
         : '<button class="doc-row" data-doc="' + index + '">' + label + '</button>';
     }).join("");
     body = '<div class="detail-body"><div class="detail-actions"><button class="outline-button" data-new-doc>'
@@ -292,7 +302,9 @@ function navigate(name, id = null) {
 function showDialog(title, body) {
   const dialog = $("#dialog");
   dialog.innerHTML = '<div class="dialog-head"><h2 id="dialog-title">' + title + '</h2>' + closeControl + '</div>' + body;
-  dialog.showModal();
+  dialog.querySelector("form")?.setAttribute("method", "dialog");
+  if (!dialog.open) dialog.showModal();
+  (dialog.querySelector("input[autofocus]") || dialog.querySelector(".dialog-head button"))?.focus({ preventScroll: true });
   updateControls();
 }
 function stageOptions(project, selected = null, includeNone = false) {
@@ -300,19 +312,29 @@ function stageOptions(project, selected = null, includeNone = false) {
     + (project ? project.stages.map((stage, index) => '<option value="' + index + '"' + (index === selected ? " selected" : "")
       + '>' + esc(stage) + '</option>').join("") : "");
 }
-function showForm() {
-  if (view !== "calendar" || !ready || busy) return;
-  const options = projects.map((project) => '<option value="' + esc(project.id) + '">' + esc(project.name) + '</option>').join("");
-  if (!options) {
+function showForm(task = null) {
+  if (!ready || busy || (!task && view !== "calendar")) return;
+  if (!projects.length) {
     showToast("เพิ่มบ้านลูกค้าก่อนนัดงาน");
     return;
   }
-  showDialog("เพิ่มงาน", '<form id="add-form" class="form"><label>ชื่องาน<input name="title" required maxlength="120" autofocus placeholder="เช่น วัดหน้างานครัว"></label>'
-    + '<label>บ้านลูกค้า<select name="project" required><option value="" disabled selected>เลือกบ้าน</option>' + options + '</select></label>'
-    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + calendarDate
-    + '"></label><label>เวลา<input type="time" name="time"></label></div><label>ขั้นตอนที่เกี่ยวข้อง<select name="stage" disabled>'
-    + stageOptions(null, null, true) + '</select></label><label>โน้ต<input name="note" maxlength="500"></label>'
-    + submitActions("บันทึกงาน") + '</form>');
+  const project = task ? projectFor(task.project) : null;
+  const options = projects.map((item) => '<option value="' + esc(item.id) + '"' + (item.id === task?.project ? " selected" : "")
+    + '>' + esc(item.name) + '</option>').join("");
+  showDialog(task ? "แก้ไขงาน" : "เพิ่มงาน", '<form id="add-form" class="form">'
+    + (task ? '<input type="hidden" name="recordId" value="' + esc(task.id) + '">' : "")
+    + '<label>ชื่องาน<input name="title" required maxlength="120" autofocus placeholder="เช่น วัดหน้างานครัว" value="' + esc(task?.title) + '"></label>'
+    + '<label>บ้านลูกค้า<select name="project" required><option value="" disabled' + (task ? "" : " selected")
+    + '>เลือกบ้าน</option>' + options + '</select></label>'
+    + '<div class="fields"><label>วันที่<input type="date" name="date" required value="' + esc(task?.date || calendarDate)
+    + '"></label><label>เวลา<input type="time" name="time" value="' + esc(task?.time)
+    + '"></label></div><label>ขั้นตอนที่เกี่ยวข้อง<select name="stage"' + (project ? "" : " disabled") + '>'
+    + stageOptions(project, task?.stage, true) + '</select></label><label>โน้ต<input name="note" maxlength="500" value="'
+    + esc(task?.note) + '"></label>' + submitActions(task ? "บันทึกการแก้ไข" : "บันทึกงาน") + '</form>');
+}
+function moreButton(kind, id, label) {
+  return '<button type="button" class="icon-button item-more" data-item-menu="' + kind + '" data-item="' + esc(id)
+    + '" title="' + esc(label) + '" aria-label="' + esc(label) + '">' + icon("more") + '</button>';
 }
 function showTask(task) {
   const project = projectFor(task.project);
@@ -320,8 +342,20 @@ function showTask(task) {
     + (task.time ? ' · ' + esc(task.time) + ' น.' : "") + '</p>'
     + (task.completedOn ? '<p class="subtle">เสร็จเมื่อ ' + formatShortDate.format(atNoon(task.completedOn)) + '</p>' : "")
     + (task.note ? '<p class="notes">' + esc(task.note) + '</p>' : "")
-    + '<div class="dialog-actions"><button class="primary" data-project="' + esc(project.id) + '">เปิดรายละเอียดบ้าน</button></div>');
+    + '<div class="dialog-actions">' + moreButton("task", task.id, "จัดการงาน")
+    + '<button class="primary" data-project="' + esc(project.id) + '">เปิดรายละเอียดบ้าน</button></div>');
 }
+function showItemMenu(kind, id) {
+  const taskMenu = kind === "task";
+  const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(projectId)?.documents.find((doc) => doc.id === id);
+  if (!item) return;
+  const label = taskMenu ? "งาน" : "ลิงก์เอกสาร";
+  const ref = ' data-kind="' + kind + '" data-item="' + esc(id) + '"';
+  showDialog("จัดการ" + label, '<p class="item-title">' + esc(item.title) + '</p><div class="item-actions">'
+    + '<button type="button" class="outline-button" data-edit-item' + ref + '>แก้ไข' + label + '</button>'
+    + '<button type="button" class="outline-button danger" data-remove-item' + ref + '>ลบ' + label + '</button></div>');
+}
+
 function showDocument(index) {
   const project = projectFor(projectId);
   const doc = docsFor(project)[index];
@@ -358,7 +392,7 @@ function showPaymentForm(id) {
   const index = project.installments.findIndex((item) => item.id === id);
   const item = project.installments[index];
   if (!item) return;
-  const expectedPaid = localData.paidAmount(item);
+  const expectedPaid = workspaceStore.paidAmount(item);
   const left = item.amountSatang - expectedPaid;
   if (!left) return;
   paymentContext = { projectId: project.id, itemId: item.id, expectedPaid, left };
@@ -368,15 +402,66 @@ function showPaymentForm(id) {
     + '<label>วันที่รับเงิน<input name="date" type="date" required value="' + dayKey.format(new Date()) + '"></label>'
     + submitActions("ยืนยันรับเงินครบ") + '</form>');
 }
-function showDocForm() {
-  showDialog("แนบลิงก์เอกสาร", '<form id="doc-form" class="form"><label>ชื่อเอกสาร<input name="title" maxlength="120" required autofocus></label>'
-    + '<label>ลิงก์เอกสาร<input name="url" type="url" required maxlength="2048" placeholder="https://"></label>'
-    + submitActions("บันทึกลิงก์") + '</form>');
+function showDocForm(doc = null) {
+  showDialog(doc ? "แก้ไขลิงก์เอกสาร" : "แนบลิงก์เอกสาร", '<form id="doc-form" class="form">'
+    + (doc ? '<input type="hidden" name="recordId" value="' + esc(doc.id) + '">' : "")
+    + '<label>ชื่อเอกสาร<input name="title" maxlength="120" required autofocus value="' + esc(doc?.title) + '"></label>'
+    + '<label>ลิงก์เอกสาร<input name="url" type="url" required maxlength="2048" placeholder="https://" value="'
+    + esc(doc?.url) + '"></label>' + submitActions(doc ? "บันทึกการแก้ไข" : "บันทึกลิงก์") + '</form>');
+}
+function confirmItemAction(title, message, label, action) {
+  pendingItemAction = action;
+  showDialog(title, '<p>' + message + '</p><div class="dialog-actions">'
+    + '<button type="button" class="text-button" data-close>กลับ</button>'
+    + '<button type="button" class="primary danger-fill" data-confirm="item">' + label + '</button></div>');
+}
+function editItem(kind, id) {
+  if (kind === "task") {
+    const task = tasks.find((entry) => entry.id === id);
+    if (task) showForm(task);
+  } else {
+    const doc = projectFor(projectId)?.documents.find((entry) => entry.id === id);
+    if (doc) showDocForm(doc);
+  }
+}
+function removeItem(kind, id) {
+  const house = projectId;
+  const taskMenu = kind === "task";
+  const item = taskMenu ? tasks.find((task) => task.id === id) : projectFor(house)?.documents.find((doc) => doc.id === id);
+  if (!item) return;
+  const label = taskMenu ? "งาน" : "ลิงก์เอกสาร";
+  confirmItemAction("ลบ" + label + "?", "ลบ “" + esc(item.title) + "” ออกจากแอปหรือไม่?", "ยืนยันลบ" + label, () =>
+    commit(() => workspaceStore.update((workspace) => {
+      const rows = taskMenu ? workspace.tasks : projectIn(workspace, house)?.documents;
+      const index = rows?.findIndex((entry) => entry.id === id) ?? -1;
+      if (index < 0) throw new InputError("ไม่พบรายการนี้แล้ว");
+      const [removed] = rows.splice(index, 1);
+      if (taskMenu && removed.stage !== null) {
+        workspaceStore.advanceStage(projectIn(workspace, removed.project), workspace.tasks);
+      }
+    }), "ลบ" + label + "แล้ว", closeDialog)
+  );
+}
+function cancelPayment(itemId, paymentId) {
+  const house = projectId;
+  const item = projectFor(house)?.installments.find((entry) => entry.id === itemId);
+  const payment = item?.payments.find((entry) => entry.id === paymentId);
+  if (!payment || payment.cancelledOn) return;
+  confirmItemAction("ยกเลิกรายการรับเงิน?", "ยอดเงินที่เหลือจะเพิ่ม " + money(payment.amountSatang)
+    + " และรายการนี้จะอยู่ในประวัติพร้อมสถานะยกเลิก", "ยืนยันยกเลิกรายการ", async () => {
+    const saved = await commit(() => workspaceStore.update((workspace) => {
+      const project = projectIn(workspace, house);
+      const stored = project?.installments.find((entry) => entry.id === itemId)?.payments.find((entry) => entry.id === paymentId);
+      if (!stored || stored.cancelledOn) throw new InputError("รายการนี้ถูกยกเลิกแล้ว");
+      stored.cancelledOn = dayKey.format(new Date());
+    }), "ยกเลิกรายการรับเงินแล้ว", closeDialog);
+    if (saved) $('[data-payment-history="' + CSS.escape(itemId) + '"]')?.setAttribute("open", "");
+  });
 }
 async function downloadBackup() {
   try {
-    const data = await localData.read();
-    const file = new Blob([localData.exportBackup(data)], { type: "application/json" });
+    const data = await workspaceStore.read();
+    const file = new Blob([workspaceStore.exportBackup(data)], { type: "application/json" });
     const url = URL.createObjectURL(file);
     const link = document.createElement("a");
     link.href = url;
@@ -408,6 +493,11 @@ document.addEventListener("click", (event) => {
   if (data.newInstallment !== undefined) showInstallmentForm();
   if (data.payment) showPaymentForm(data.payment);
   if (data.newDoc !== undefined) showDocForm();
+  if (data.itemMenu) showItemMenu(data.itemMenu, data.item);
+  if (data.editItem !== undefined) editItem(data.kind, data.item);
+  if (data.removeItem !== undefined) removeItem(data.kind, data.item);
+  if (data.cancelPayment) cancelPayment(data.installment, data.cancelPayment);
+  if (data.confirm === "item" && pendingItemAction) void pendingItemAction();
   if (data.export !== undefined) void downloadBackup();
   if (data.import !== undefined) {
     backupPicker.value = "";
@@ -418,13 +508,13 @@ document.addEventListener("click", (event) => {
     + '<button type="button" class="text-button" data-close>ยกเลิก</button>'
     + '<button type="button" class="primary" data-confirm="revert">ย้อนการกู้คืน</button></div>');
   if (data.confirm === "restore" && pendingRestore) {
-    void commit(() => localData.restore(pendingRestore), "กู้คืนข้อมูลแล้ว", () => {
+    void commit(() => workspaceStore.restore(pendingRestore), "กู้คืนข้อมูลแล้ว", () => {
       hasRecovery = true;
       pendingRestore = undefined;
       closeDialog();
     });
   }
-  if (data.confirm === "revert") void commit(localData.revert, "ย้อนการกู้คืนแล้ว", closeDialog);
+  if (data.confirm === "revert") void commit(workspaceStore.revert, "ย้อนการกู้คืนแล้ว", closeDialog);
   if (data.view) navigate(data.view);
   if (data.project) {
     if ($("#dialog").open) $("#dialog").close();
@@ -448,13 +538,13 @@ document.addEventListener("click", (event) => {
     const item = tasks.find((task) => task.id === data.toggle);
     if (item) {
       const done = !item.done;
-      void commit(() => localData.update((workspace) => {
+      void commit(() => workspaceStore.update((workspace) => {
         const task = workspace.tasks.find((entry) => entry.id === item.id);
         if (!task) throw new InputError("ไม่พบงานนี้แล้ว");
         if (task.done === done) return;
         task.done = done;
         task.completedOn = done ? dayKey.format(new Date()) : null;
-        if (task.stage !== null) localData.advanceStage(projectIn(workspace, task.project), workspace.tasks);
+        if (task.stage !== null) workspaceStore.advanceStage(projectIn(workspace, task.project), workspace.tasks);
       }), done ? "ทำเครื่องหมายเสร็จแล้ว" : "ย้ายกลับไปยังงานที่ยังไม่เสร็จ").then((saved) => {
         if (saved && event.detail === 0) {
           $('[data-toggle="' + CSS.escape(item.id) + '"]')?.focus({ preventScroll: true });
@@ -488,34 +578,48 @@ $("#dialog").addEventListener("click", (event) => {
   }
 });
 function saveTask(form) {
+  const existingId = form.get("recordId");
   const stage = form.get("stage");
-  const task = {
-    id: localData.createId(), title: form.get("title").trim(), project: form.get("project"),
-    date: form.get("date"), time: form.get("time"), note: form.get("note").trim(), done: false,
+  const changes = {
+    id: existingId || workspaceStore.createId(), title: form.get("title").trim(), project: form.get("project"),
+    date: form.get("date"), time: form.get("time"), note: form.get("note").trim(),
     stage: stage ? Number(stage) : null
   };
-  void commit(() => localData.update((workspace) => {
+  void commit(() => workspaceStore.update((workspace) => {
+    const index = workspace.tasks.findIndex((entry) => entry.id === existingId);
+    const previous = workspace.tasks[index];
+    if (existingId && !previous) throw new InputError("ไม่พบงานนี้แล้ว");
+    const task = { done: false, ...previous, ...changes };
     const project = projectIn(workspace, task.project);
-    if (!localData.validTask(task, project)) throw new InputError("กรุณาตรวจชื่องาน บ้าน และวันที่");
-    workspace.tasks.push(task);
-    if (task.stage !== null) localData.advanceStage(project, workspace.tasks);
-  }), "บันทึกงานแล้ว", () => {
+    if (!workspaceStore.validTask(task, project)) throw new InputError("กรุณาตรวจชื่องาน บ้าน และวันที่");
+    if (previous) workspace.tasks[index] = task;
+    else workspace.tasks.push(task);
+    const linkageChanged = !previous || previous.project !== task.project || previous.stage !== task.stage;
+    if (linkageChanged) {
+      const affected = new Set();
+      if (previous && previous.stage !== null) affected.add(previous.project);
+      if (task.stage !== null) affected.add(task.project);
+      affected.forEach((id) => workspaceStore.advanceStage(projectIn(workspace, id), workspace.tasks));
+    }
+  }), existingId ? "บันทึกการแก้ไขแล้ว" : "บันทึกงานแล้ว", () => {
     closeDialog();
-    calendarDate = task.date;
-    monthStart = task.date.slice(0, 7) + "-01";
+    if (view === "calendar") {
+      calendarDate = changes.date;
+      monthStart = changes.date.slice(0, 7) + "-01";
+    }
   });
 }
 function saveHouse(form) {
   const project = {
-    id: localData.createId(), name: form.get("name").trim(), place: form.get("place").trim(),
-    contractSatang: localData.toSatang(form.get("amount")), sample: false,
-    stages: [...localData.stages], stageStart: 0, stageIndex: 0, installments: [], documents: []
+    id: workspaceStore.createId(), name: form.get("name").trim(), place: form.get("place").trim(),
+    contractSatang: workspaceStore.toSatang(form.get("amount")), sample: false,
+    stages: [...workspaceStore.stages], stageStart: 0, stageIndex: 0, installments: [], documents: []
   };
-  if (!project.name || !localData.validMoney(project.contractSatang)) {
+  if (!project.name || !workspaceStore.validMoney(project.contractSatang)) {
     showToast("กรุณากรอกชื่อบ้านและราคารวม");
     return;
   }
-  void commit(() => localData.update((workspace) => workspace.projects.push(project)), "เพิ่มบ้านแล้ว", () => {
+  void commit(() => workspaceStore.update((workspace) => workspace.projects.push(project)), "เพิ่มบ้านแล้ว", () => {
     closeDialog();
     view = "detail";
     projectId = project.id;
@@ -526,7 +630,7 @@ function saveHouse(form) {
 function saveHouseStage(form) {
   const id = projectId;
   const index = Number(form.get("stage"));
-  void commit(() => localData.update((workspace) => {
+  void commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, id);
     if (!project?.stages[index]) throw new InputError("ไม่พบขั้นตอนนี้แล้ว");
     project.stageStart = index;
@@ -536,31 +640,31 @@ function saveHouseStage(form) {
 function saveInstallment(form) {
   const id = projectId;
   const label = form.get("label").trim();
-  const amountSatang = localData.toSatang(form.get("amount"));
-  if (!label || !localData.validMoney(amountSatang)) {
+  const amountSatang = workspaceStore.toSatang(form.get("amount"));
+  if (!label || !workspaceStore.validMoney(amountSatang)) {
     showToast("กรุณากรอกชื่องวดและจำนวนเงิน");
     return;
   }
-  void commit(() => localData.update((workspace) => {
+  void commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, id);
     if (!project) throw new InputError("ไม่พบบ้านนี้แล้ว");
     const allotted = project.installments.reduce((total, item) => total + item.amountSatang, 0);
     if (amountSatang > project.contractSatang - allotted) throw new InputError("ยอดงวดรวมเกินราคารวมของบ้าน");
-    project.installments.push({ id: localData.createId(), label, amountSatang, billed: false, payments: [] });
+    project.installments.push({ id: workspaceStore.createId(), label, amountSatang, billed: false, payments: [] });
   }), "เพิ่มงวดเงินแล้ว", closeDialog);
 }
 function savePayment(form) {
   const context = paymentContext;
   if (!context) return;
-  const payment = { id: localData.createId(), amountSatang: localData.toSatang(form.get("amount")), date: form.get("date") };
-  if (!localData.validMoney(payment.amountSatang) || !localData.validDate(payment.date)) {
+  const payment = { id: workspaceStore.createId(), amountSatang: workspaceStore.toSatang(form.get("amount")), date: form.get("date") };
+  if (!workspaceStore.validMoney(payment.amountSatang) || !workspaceStore.validDate(payment.date)) {
     showToast("กรุณาตรวจยอดและวันที่รับเงิน");
     return;
   }
-  void commit(() => localData.update((workspace) => {
+  void commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, context.projectId);
     const item = project?.installments.find((entry) => entry.id === context.itemId);
-    if (!item || localData.paidAmount(item) !== context.expectedPaid) {
+    if (!item || workspaceStore.paidAmount(item) !== context.expectedPaid) {
       throw new InputError("ยอดเงินเปลี่ยนแล้ว กรุณาปิดแล้วเปิดกรอกรับเงินใหม่");
     }
     if (payment.amountSatang > item.amountSatang - context.expectedPaid) throw new InputError("ยอดรับสูงกว่ายอดค้าง");
@@ -569,16 +673,23 @@ function savePayment(form) {
 }
 function saveDoc(form) {
   const id = projectId;
+  const existingId = form.get("recordId");
   const title = form.get("title").trim();
   const url = form.get("url").trim();
-  if (!title || !localData.validLink(url)) {
+  if (!title || !workspaceStore.validLink(url)) {
     showToast("กรุณาใส่ชื่อและลิงก์เอกสารที่ขึ้นต้นด้วย https://");
     return;
   }
-  void commit(() => localData.update((workspace) => {
+  void commit(() => workspaceStore.update((workspace) => {
     const project = projectIn(workspace, id);
     if (!project) throw new InputError("ไม่พบบ้านนี้แล้ว");
-    project.documents.push({ id: localData.createId(), title, url });
+    if (existingId) {
+      const doc = project.documents.find((item) => item.id === existingId);
+      if (!doc) throw new InputError("ไม่พบลิงก์นี้แล้ว");
+      Object.assign(doc, { title, url });
+    } else {
+      project.documents.push({ id: workspaceStore.createId(), title, url });
+    }
   }), "บันทึกลิงก์แล้ว", closeDialog);
 }
 const formHandlers = {
@@ -586,10 +697,10 @@ const formHandlers = {
   "installment-form": saveInstallment, "payment-form": savePayment, "doc-form": saveDoc
 };
 document.addEventListener("submit", (event) => {
-  const handler = formHandlers[event.target.id];
-  if (!handler) return;
+  if (!event.target.closest("#dialog")) return;
   event.preventDefault();
-  if (ready && !busy) handler(new FormData(event.target));
+  const handler = formHandlers[event.target.getAttribute("id")];
+  if (handler && ready && !busy) handler(new FormData(event.target));
 });
 $("#dialog").addEventListener("change", (event) => {
   if (!event.target.matches("#add-form select[name='project']")) return;
@@ -600,14 +711,14 @@ $("#dialog").addEventListener("change", (event) => {
 });
 $("#dialog").addEventListener("input", (event) => {
   if (!event.target.matches("#payment-form input[name='amount']") || !paymentContext) return;
-  $("#payment-form [type=submit]").textContent = localData.toSatang(event.target.value) === paymentContext.left
+  $("#payment-form [type=submit]").textContent = workspaceStore.toSatang(event.target.value) === paymentContext.left
     ? "ยืนยันรับเงินครบ" : "บันทึกรับเงิน";
 });
 backupPicker.addEventListener("change", async (event) => {
   const file = event.target.files[0];
   if (!file || busy || !ready) return;
   try {
-    const incoming = localData.parseBackup(await file.text());
+    const incoming = workspaceStore.parseBackup(await file.text());
     if (view !== "backup" || $("#dialog").open) return;
     pendingRestore = incoming;
     showDialog("กู้คืนข้อมูล", '<p>พบ ' + incoming.projects.length + ' บ้าน และ ' + incoming.tasks.length + ' งานในไฟล์นี้</p>'
@@ -621,7 +732,7 @@ backupPicker.addEventListener("change", async (event) => {
 workspaceChannel?.addEventListener("message", async () => {
   if (!ready) return;
   try {
-    const [data, previous] = await Promise.all([localData.read(), localData.hasPrevious()]);
+    const [data, previous] = await Promise.all([workspaceStore.read(), workspaceStore.hasPrevious()]);
     setWorkspace(data);
     hasRecovery = previous;
     render(false);
@@ -658,17 +769,18 @@ window.addEventListener("appinstalled", () => {
 });
 async function start() {
   try {
-    if (typeof localData === "undefined") {
+    if (window.localData?.revision !== 8) {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "./data.js?v=7";
+        script.src = "./data.js?v=8";
         script.onload = resolve;
         script.onerror = reject;
         document.head.append(script);
       });
     }
-    const data = await localData.load(today, offsetDay(today, 3));
-    hasRecovery = await localData.hasPrevious();
+    workspaceStore = window.localData;
+    const data = await workspaceStore.load(today, offsetDay(today, 3));
+    hasRecovery = await workspaceStore.hasPrevious();
     setWorkspace(data);
     ready = true;
     render();
